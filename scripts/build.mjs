@@ -40,7 +40,11 @@ if (flag('--sandbox') || !fs.existsSync(bundle)) {
 // 2. Frontend.
 if (!nogui && !flag('--skip-frontend')) {
   const fe = path.join(root, 'frontend');
-  if (!fs.existsSync(path.join(fe, 'node_modules'))) run('npm', ['ci'], { cwd: fe });
+  // Reinstall when node_modules predates package-lock.json (npm writes
+  // node_modules/.package-lock.json on every install), so a dependency bump
+  // pulled into an existing checkout is not built against stale packages.
+  const mtime = (f) => (fs.existsSync(f) ? fs.statSync(f).mtimeMs : 0);
+  if (mtime(path.join(fe, 'node_modules', '.package-lock.json')) < mtime(path.join(fe, 'package-lock.json'))) run('npm', ['ci'], { cwd: fe });
   run('npm', ['run', 'build'], { cwd: fe });
 }
 
