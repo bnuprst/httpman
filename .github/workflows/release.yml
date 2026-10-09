@@ -65,14 +65,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: Install npm with staged publishing
+        run: npm install -g npm@12
       - name: Check npm token
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::The NPM_TOKEN repository secret is not set. Add an npm automation/granular token under Settings → Secrets and variables → Actions."
+            echo "::error::NPM_TOKEN is not set. Add a granular \"Read and write (stage only)\" npm token as a secret of the npm environment."
             exit 1
           fi
           npm whoami
@@ -101,14 +103,23 @@ jobs:
           tag_name: ${{ startsWith(env.VERSION, 'v') && env.VERSION || format('v{0}', env.VERSION) }}
           files: dist/release/*
           generate_release_notes: true
-      - name: Publish to npm
+      - name: Stage npm packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           node scripts/npm-package.mjs "${VERSION#v}" --require-all
-          # Platform packages first, launcher last; skip versions already on the registry so a re-run can finish a partial publish.
+          # NPM_TOKEN is stage-only: versions land in the staged queue and a
+          # maintainer approves them with 2FA (npm stage list / npm stage approve).
+          # Skip versions already published or staged so a re-run can finish a partial run.
           for d in dist/npm/httpman-app-*/ dist/npm/httpman-app/; do
-            spec="$(node -p "const p=require('./$d/package.json'); p.name+'@'+p.version")"
-            if npm view "$spec" version >/dev/null 2>&1; then echo "skip $spec (already published)"; continue; fi
-            npm publish --access public "$d"
+            name="$(node -p "require('./$d/package.json').name")"
+            version="$(node -p "require('./$d/package.json').version")"
+            if npm view "$name@$version" version >/dev/null 2>&1; then echo "skip $name@$version (already published)"; continue; fi
+            if npm stage list "$name" --json 2>/dev/null | V="$version" node -e "
+              const items = JSON.parse(require('fs').readFileSync(0, 'utf8') || '[]');
+              process.exit(items.some((i) => i.version === process.env.V && i.status !== 'rejected') ? 0 : 1)"; then
+              echo "skip $name@$version (already staged)"; continue
+            fi
+            npm stage publish --access public "$d"
           done
+          echo "::notice::Staged ${VERSION#v}. Approve each package with 2FA: npm stage list, then npm stage approve <id> (platform packages before httpman-app)."
