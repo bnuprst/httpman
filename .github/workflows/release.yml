@@ -108,9 +108,12 @@ jobs:
             name="$(node -p "require('./$d/package.json').name")"
             version="$(node -p "require('./$d/package.json').version")"
             if npm view "$name@$version" version >/dev/null 2>&1; then echo "skip $name@$version (already published)"; continue; fi
+            # npm stage list needs a maintainer login; under trusted publishing it prints an
+            # error object instead of a list, and the version is simply attempted.
             if npm stage list "$name" --json 2>/dev/null | V="$version" node -e "
-              const items = JSON.parse(require('fs').readFileSync(0, 'utf8') || '[]');
-              process.exit(items.some((i) => i.version === process.env.V && i.status !== 'rejected') ? 0 : 1)"; then
+              let items = [];
+              try { items = JSON.parse(require('fs').readFileSync(0, 'utf8')); } catch {}
+              process.exit(Array.isArray(items) && items.some((i) => i.version === process.env.V && i.status !== 'rejected') ? 0 : 1)"; then
               echo "skip $name@$version (already staged)"; continue
             fi
             # Keep going on failure so one rejected package doesn't hide the state of the rest.
