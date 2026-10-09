@@ -81,7 +81,7 @@ export default function BodyEditor({ body, onChange, collectionId, onSave, onSen
       </div>
       <div className="body-content">
         {mode === 'none' && <div className="empty-note">This request does not have a body</div>}
-        {mode === 'raw' && <Code value={body?.raw || ''} lang={lang as Lang} onChange={(v) => set({ raw: v })} onSave={onSave} onSend={onSend} />}
+        {mode === 'raw' && <Code value={body?.raw || ''} lang={lang as Lang} onChange={(v) => set({ raw: v })} onSave={onSave} onSend={onSend} codecs />}
         {mode === 'urlencoded' && <KeyValueTable rows={kvList(body?.urlencoded)} onChange={(rows) => set({ urlencoded: rows })} collectionId={collectionId} description />}
         {mode === 'formdata' && <KeyValueTable rows={kvList(body?.formdata)} onChange={(rows) => set({ formdata: rows })} collectionId={collectionId} description files />}
         {mode === 'file' && (

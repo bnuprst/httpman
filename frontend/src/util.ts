@@ -322,10 +322,59 @@ export function b64ToBytes(b64: string): Uint8Array {
 }
 
 export function textToB64(text: string): string {
-  const bytes = new TextEncoder().encode(text);
+  return bytesToB64(new TextEncoder().encode(text));
+}
+
+function bytesToB64(bytes: Uint8Array): string {
   let bin = '';
-  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(bin);
+}
+
+// Lenient base64 decode: accepts the URL-safe alphabet, embedded whitespace and missing padding.
+function looseB64ToBytes(b64: string): Uint8Array {
+  let s = b64.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  s = s.replace(/=+$/, '');
+  if (s.length % 4 === 1 || /[^A-Za-z0-9+/]/.test(s)) throw new Error('Selection is not valid base64');
+  return b64ToBytes(s + '='.repeat((4 - (s.length % 4)) % 4));
+}
+
+function bytesToUtf8(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('Decoded data is not UTF-8 text');
+  }
+}
+
+async function pipeBytes(bytes: Uint8Array, stream: CompressionStream | DecompressionStream): Promise<Uint8Array> {
+  const out = new Blob([bytes]).stream().pipeThrough(stream);
+  return new Uint8Array(await new Response(out).arrayBuffer());
+}
+
+export type Codec = 'base64-encode' | 'base64-decode' | 'gzip-base64-encode' | 'gzip-base64-decode';
+
+export async function applyCodec(codec: Codec, text: string): Promise<string> {
+  switch (codec) {
+    case 'base64-encode':
+      return textToB64(text);
+    case 'base64-decode':
+      return bytesToUtf8(looseB64ToBytes(text));
+    case 'gzip-base64-encode':
+      return bytesToB64(await pipeBytes(new TextEncoder().encode(text), new CompressionStream('gzip')));
+    case 'gzip-base64-decode': {
+      const bytes = looseB64ToBytes(text);
+      // gzip (1f 8b) is the common case; fall back to zlib-wrapped deflate.
+      const format = bytes[0] === 0x1f && bytes[1] === 0x8b ? 'gzip' : 'deflate';
+      let out: Uint8Array;
+      try {
+        out = await pipeBytes(bytes, new DecompressionStream(format));
+      } catch {
+        throw new Error('Selection is not gzip-compressed base64');
+      }
+      return bytesToUtf8(out);
+    }
+  }
 }
 
 export function varValueString(v: unknown): string {

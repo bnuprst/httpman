@@ -204,8 +204,8 @@ function BodyView({ res, name }: { res: ResponseView; name: string }) {
         </button>
       </div>
       <div className="body-content">
-        {effective === 'pretty' && <Code value={pretty} lang={lang} readOnly wrap={wrap} />}
-        {effective === 'raw' && <Code value={text} lang="text" readOnly wrap={wrap} />}
+        {effective === 'pretty' && <Code value={pretty} lang={lang} readOnly wrap={wrap} codecs />}
+        {effective === 'raw' && <Code value={text} lang="text" readOnly wrap={wrap} codecs />}
         {effective === 'binary' && <div className="empty-note">Binary response ({formatBytes(res.bodySize)}). Use Preview or save it to a file.</div>}
         {effective === 'preview' &&
           (isImage ? (
