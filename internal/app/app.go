@@ -152,12 +152,13 @@ func (a *App) Init() (*InitData, error) {
 			d.Errors = append(d.Errors, fmt.Sprintf("collection %s: %v", m.ID, err))
 			continue
 		}
-		// Return normalized JSON (ids assigned) but keep the stored raw
-		// form when it already parses identically, to preserve extra fields.
+		// Files edited outside httpman may lack item ids etc.; normalize
+		// them (keeping unknown fields) before handing them to the UI.
 		raw, _ := a.ws.CollectionRaw(m.ID)
 		if needsNormalization(raw) {
-			raw, _ = collection.Marshal(c)
-			_, _ = a.ws.SaveCollectionRaw(raw)
+			if _, err := a.ws.SaveCollectionRaw(raw); err == nil {
+				raw, _ = a.ws.CollectionRaw(c.Info.PostmanID)
+			}
 		}
 		d.Collections = append(d.Collections, raw)
 	}
@@ -276,8 +277,7 @@ func (a *App) importData(name string, data []byte, res *ImportResult) {
 		}
 		return
 	}
-	if c, err := a.ws.ImportCollection(data); err == nil {
-		raw, _ := collection.Marshal(c)
+	if _, raw, err := a.ws.ImportCollection(data); err == nil {
 		res.Collections = append(res.Collections, raw)
 		return
 	}

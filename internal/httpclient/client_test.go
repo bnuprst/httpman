@@ -10,7 +10,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/bnuprst/httpman/internal/collection"
 )
@@ -100,5 +102,25 @@ func TestParseURL(t *testing.T) {
 		if u.String() != want {
 			t.Errorf("%s → %s, want %s", in, u, want)
 		}
+	}
+}
+
+func TestHawkSpecVector(t *testing.T) {
+	// Example from the Hawk specification.
+	a := &collection.Auth{Type: "hawk", Params: map[string][]collection.AuthParam{"hawk": {
+		{Key: "authId", Value: "dh37fgj492je"},
+		{Key: "authKey", Value: "werxhqb98rpaxn39848xrunpaw3489ruxnpa98w4rxn"},
+		{Key: "algorithm", Value: "sha256"},
+		{Key: "timestamp", Value: "1353832234"},
+		{Key: "nonce", Value: "j4h3g2"},
+		{Key: "extraData", Value: "some-app-ext-data"},
+	}}}
+	u, _ := ParseURL("http://example.com:8000/resource/1?b=1&a=2")
+	h := http.Header{}
+	if err := signHawk(a, "GET", u, h, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.Get("Authorization"); !strings.Contains(got, `mac="6R4rV5iE+NPoym+WwjeHzjAGXUtLNIxmo1vpMofpLAE="`) {
+		t.Errorf("got %s", got)
 	}
 }

@@ -105,15 +105,6 @@ func pretty(v any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func reindent(raw []byte) []byte {
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, bytes.TrimSpace(raw), "", "\t"); err != nil {
-		return raw
-	}
-	buf.WriteByte('\n')
-	return buf.Bytes()
-}
-
 // ---- collections ----
 
 // Meta identifies a stored collection or environment.
@@ -172,55 +163,51 @@ func (w *Workspace) Collection(id string) (*collection.Collection, error) {
 }
 
 // SaveCollectionRaw validates and stores collection JSON under its _postman_id.
-// Unknown fields are preserved because the JSON is stored as given.
+// Unknown fields are preserved.
 func (w *Workspace) SaveCollectionRaw(data []byte) (string, error) {
-	c, err := collection.Parse(data)
+	out, c, err := collection.NormalizeRaw(data)
 	if err != nil {
 		return "", err
 	}
-	var probe struct {
-		Info struct {
-			ID string `json:"_postman_id"`
-		} `json:"info"`
-	}
-	_ = json.Unmarshal(data, &probe)
-	id := probe.Info.ID
-	if id == "" {
-		// No id: store the normalized form which carries a generated one.
-		data, err = collection.Marshal(c)
-		if err != nil {
-			return "", err
-		}
-		id = c.Info.PostmanID
-	}
+	id := c.Info.PostmanID
 	if err := safeID(id); err != nil {
 		return "", err
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return id, writeFile(w.collectionPath(id), reindent(data))
+	return id, writeFile(w.collectionPath(id), out)
 }
 
 // ImportCollection parses any supported collection format, normalizes it to
-// v2.1 and stores it. A colliding id gets replaced by a fresh one.
-func (w *Workspace) ImportCollection(data []byte) (*collection.Collection, error) {
-	c, err := collection.Parse(data)
+// v2.1 (keeping unknown fields) and stores it. A colliding id is replaced.
+func (w *Workspace) ImportCollection(data []byte) (*collection.Collection, []byte, error) {
+	out, c, err := collection.NormalizeRaw(data)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if safeID(c.Info.PostmanID) != nil {
-		c.Info.PostmanID = uuid.NewString()
-	}
-	if _, err := os.Stat(w.collectionPath(c.Info.PostmanID)); err == nil {
-		c.Info.PostmanID = uuid.NewString()
-	}
-	out, err := collection.Marshal(c)
-	if err != nil {
-		return nil, err
+	if safeID(c.Info.PostmanID) != nil || w.exists(c.Info.PostmanID) {
+		var root map[string]any
+		dec := json.NewDecoder(bytes.NewReader(out))
+		dec.UseNumber()
+		if err := dec.Decode(&root); err != nil {
+			return nil, nil, err
+		}
+		root["info"].(map[string]any)["_postman_id"] = uuid.NewString()
+		if out, err = pretty(root); err != nil {
+			return nil, nil, err
+		}
+		if c, err = collection.Parse(out); err != nil {
+			return nil, nil, err
+		}
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return c, writeFile(w.collectionPath(c.Info.PostmanID), out)
+	return c, out, writeFile(w.collectionPath(c.Info.PostmanID), out)
+}
+
+func (w *Workspace) exists(id string) bool {
+	_, err := os.Stat(w.collectionPath(id))
+	return err == nil
 }
 
 // DeleteCollection removes a collection file.

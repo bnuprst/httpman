@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -22,8 +23,8 @@ const (
 type Collection struct {
 	Info                    Info            `json:"info"`
 	Item                    []*Item         `json:"item"`
-	Event                   []Event         `json:"event,omitempty"`
-	Variable                []Variable      `json:"variable,omitempty"`
+	Event                   Events          `json:"event,omitempty"`
+	Variable                Variables       `json:"variable,omitempty"`
 	Auth                    *Auth           `json:"auth,omitempty"`
 	ProtocolProfileBehavior json.RawMessage `json:"protocolProfileBehavior,omitempty"`
 }
@@ -45,8 +46,8 @@ type Item struct {
 	Item                    []*Item         `json:"item,omitempty"`
 	Request                 *Request        `json:"request,omitempty"`
 	Response                json.RawMessage `json:"response,omitempty"`
-	Event                   []Event         `json:"event,omitempty"`
-	Variable                []Variable      `json:"variable,omitempty"`
+	Event                   Events          `json:"event,omitempty"`
+	Variable                Variables       `json:"variable,omitempty"`
 	Auth                    *Auth           `json:"auth,omitempty"`
 	ProtocolProfileBehavior json.RawMessage `json:"protocolProfileBehavior,omitempty"`
 }
@@ -107,6 +108,57 @@ type Event struct {
 	Disabled bool   `json:"disabled,omitempty"`
 }
 
+// Events accepts a list of events or a single event object.
+type Events []Event
+
+func (e *Events) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) > 0 && b[0] == '{' {
+		var one Event
+		if err := json.Unmarshal(b, &one); err != nil {
+			return err
+		}
+		*e = Events{one}
+		return nil
+	}
+	var list []Event
+	if err := json.Unmarshal(b, &list); err != nil {
+		return err
+	}
+	*e = list
+	return nil
+}
+
+// Variables accepts a list of variables or a {"key": value} object.
+type Variables []Variable
+
+func (v *Variables) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) > 0 && b[0] == '{' {
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			return err
+		}
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		out := make(Variables, 0, len(keys))
+		for _, k := range keys {
+			out = append(out, Variable{Key: k, Value: m[k]})
+		}
+		*v = out
+		return nil
+	}
+	var list []Variable
+	if err := json.Unmarshal(b, &list); err != nil {
+		return err
+	}
+	*v = list
+	return nil
+}
+
 // Script holds JavaScript source lines.
 type Script struct {
 	ID   string          `json:"id,omitempty"`
@@ -145,7 +197,7 @@ func (e *ExecLines) UnmarshalJSON(b []byte) error {
 func (s Script) Source() string { return strings.Join(s.Exec, "\n") }
 
 // ScriptFor returns the joined source of all enabled scripts for an event.
-func ScriptFor(events []Event, listen string) string {
+func ScriptFor(events Events, listen string) string {
 	var parts []string
 	for _, ev := range events {
 		if ev.Listen == listen && !ev.Disabled {
@@ -269,13 +321,14 @@ type QueryParam struct {
 // URL is a Postman URL. It can be a string or an object in JSON.
 type URL struct {
 	Raw      string       `json:"raw"`
+	Auth     *URLAuth     `json:"auth,omitempty"`
 	Protocol string       `json:"protocol,omitempty"`
 	Host     []string     `json:"host,omitempty"`
 	Path     []string     `json:"path,omitempty"`
 	Port     string       `json:"port,omitempty"`
 	Query    []QueryParam `json:"query,omitempty"`
 	Hash     string       `json:"hash,omitempty"`
-	Variable []Variable   `json:"variable,omitempty"`
+	Variable Variables    `json:"variable,omitempty"`
 }
 
 func (u *URL) UnmarshalJSON(b []byte) error {
@@ -294,18 +347,19 @@ func (u *URL) UnmarshalJSON(b []byte) error {
 	}
 	var raw struct {
 		Raw      string          `json:"raw"`
+		Auth     *URLAuth        `json:"auth"`
 		Protocol string          `json:"protocol"`
 		Host     json.RawMessage `json:"host"`
 		Path     json.RawMessage `json:"path"`
 		Port     json.RawMessage `json:"port"`
 		Query    []QueryParam    `json:"query"`
 		Hash     string          `json:"hash"`
-		Variable []Variable      `json:"variable"`
+		Variable Variables       `json:"variable"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
-	*u = URL{Raw: raw.Raw, Protocol: raw.Protocol, Query: raw.Query, Hash: raw.Hash, Variable: raw.Variable}
+	*u = URL{Raw: raw.Raw, Auth: raw.Auth, Protocol: raw.Protocol, Query: raw.Query, Hash: raw.Hash, Variable: raw.Variable}
 	u.Host = stringOrList(raw.Host, ".")
 	u.Path = stringOrList(raw.Path, "/")
 	if len(raw.Port) > 0 {
@@ -358,16 +412,30 @@ func stringOrList(b json.RawMessage, sep string) []string {
 	return out
 }
 
-// String renders the URL. Raw is authoritative when present because it is
-// what the user edits; structured parts are used as a fallback.
+// URLAuth is the userinfo part of a URL object.
+type URLAuth struct {
+	User     string `json:"user,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+// String renders the URL. Like Postman's SDK, the structured parts win
+// when present (raw is only used for display); raw is the fallback for
+// string URLs.
 func (u URL) String() string {
-	if u.Raw != "" {
-		return u.Raw
+	if len(u.Host) == 0 {
+		return strings.TrimSpace(u.Raw)
 	}
 	var sb strings.Builder
 	if u.Protocol != "" {
 		sb.WriteString(u.Protocol)
 		sb.WriteString("://")
+	}
+	if u.Auth != nil && (u.Auth.User != "" || u.Auth.Password != "") {
+		sb.WriteString(u.Auth.User)
+		if u.Auth.Password != "" {
+			sb.WriteString(":" + u.Auth.Password)
+		}
+		sb.WriteString("@")
 	}
 	sb.WriteString(strings.Join(u.Host, "."))
 	if u.Port != "" {
@@ -378,10 +446,16 @@ func (u URL) String() string {
 	}
 	var qs []string
 	for _, q := range u.Query {
-		if q.Disabled || q.Key == nil {
+		if q.Disabled {
 			continue
 		}
-		s := *q.Key
+		// Mirrors postman-collection's QueryParam.unparse: a null value
+		// renders "key", an empty value "key=", and empty params keep
+		// their separators.
+		s := ""
+		if q.Key != nil {
+			s = *q.Key
+		}
 		if q.Value != nil {
 			s += "=" + *q.Value
 		}

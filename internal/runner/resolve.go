@@ -38,6 +38,8 @@ func ProtocolProfile(c *collection.Collection, item *collection.Item, parents []
 			FollowRedirects *bool `json:"followRedirects"`
 			MaxRedirects    *int  `json:"maxRedirects"`
 			StrictSSL       *bool `json:"strictSSL"`
+			FollowOriginal  *bool `json:"followOriginalHttpMethod"`
+			RemoveReferer   *bool `json:"removeRefererHeaderOnRedirect"`
 		}
 		if json.Unmarshal(raw, &p) == nil {
 			if p.FollowRedirects != nil {
@@ -48,6 +50,12 @@ func ProtocolProfile(c *collection.Collection, item *collection.Item, parents []
 			}
 			if p.StrictSSL != nil {
 				ov.StrictSSL = p.StrictSSL
+			}
+			if p.FollowOriginal != nil {
+				ov.FollowOriginalMethod = p.FollowOriginal
+			}
+			if p.RemoveReferer != nil {
+				ov.RemoveRefererOnRedirect = p.RemoveReferer
 			}
 		}
 	}

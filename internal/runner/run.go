@@ -1,13 +1,13 @@
 package runner
 
 import (
-	"bytes"
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +33,7 @@ func LoadDataFile(path string) (*DataRows, error) {
 // ParseData parses iteration data. When isJSON is false, JSON is still
 // detected by content.
 func ParseData(b []byte, isJSON bool) (*DataRows, error) {
-	b = bytes.TrimPrefix(bytes.TrimSpace(b), []byte("\xef\xbb\xbf"))
+	b = collection.DecodeText(b)
 	if isJSON || (len(b) > 0 && (b[0] == '[' || b[0] == '{')) {
 		var rows []map[string]any
 		if err := json.Unmarshal(b, &rows); err != nil {
@@ -55,32 +55,128 @@ func ParseData(b []byte, isJSON bool) (*DataRows, error) {
 		}
 		return d, nil
 	}
-	r := csv.NewReader(bytes.NewReader(b))
-	r.FieldsPerRecord = -1
-	r.LazyQuotes = true
-	records, err := r.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("invalid CSV: %w", err)
-	}
+	records := parseCSV(string(b))
 	if len(records) == 0 {
 		return &DataRows{}, nil
 	}
-	d := &DataRows{Columns: records[0]}
+	d := &DataRows{}
+	for _, f := range records[0] {
+		d.Columns = append(d.Columns, f.text)
+	}
 	for _, rec := range records[1:] {
-		if len(rec) == 1 && rec[0] == "" {
+		if len(rec) == 1 && rec[0].text == "" && !rec[0].quoted {
 			continue
 		}
 		row := map[string]any{}
 		for i, col := range d.Columns {
-			if i < len(rec) {
-				row[col] = rec[i]
-			} else {
-				row[col] = ""
+			if i >= len(rec) {
+				break
 			}
+			row[col] = rec[i].value()
 		}
 		d.Rows = append(d.Rows, row)
 	}
 	return d, nil
+}
+
+type csvField struct {
+	text   string
+	quoted bool
+}
+
+var csvNumber = regexp.MustCompile(`^-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$`)
+
+// value casts unquoted numeric fields to numbers, like newman (csv-parse
+// with cast enabled); quoted fields always stay strings.
+func (f csvField) value() any {
+	if !f.quoted && csvNumber.MatchString(f.text) && len(strings.TrimLeft(f.text, "-")) < 16 {
+		if n, err := strconv.ParseFloat(f.text, 64); err == nil {
+			return n
+		}
+	}
+	return f.text
+}
+
+// parseCSV is a lenient RFC 4180 parser: fields are trimmed, quotes inside
+// unquoted fields are kept literally, and "" escapes a quote.
+func parseCSV(s string) [][]csvField {
+	s = strings.TrimPrefix(s, "\ufeff")
+	var rows [][]csvField
+	var row []csvField
+	i := 0
+	for i <= len(s) {
+		// skip leading spaces
+		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+			i++
+		}
+		var f csvField
+		if i < len(s) && s[i] == '"' {
+			f.quoted = true
+			i++
+			var sb strings.Builder
+			for i < len(s) {
+				if s[i] == '"' {
+					if i+1 < len(s) && s[i+1] == '"' {
+						sb.WriteByte('"')
+						i += 2
+						continue
+					}
+					i++
+					break
+				}
+				sb.WriteByte(s[i])
+				i++
+			}
+			f.text = sb.String()
+			// ignore anything up to the next delimiter
+			for i < len(s) && s[i] != ',' && s[i] != '\n' && s[i] != '\r' {
+				i++
+			}
+		} else {
+			start := i
+			for i < len(s) && s[i] != ',' && s[i] != '\n' && s[i] != '\r' {
+				i++
+			}
+			f.text = strings.TrimSpace(s[start:i])
+		}
+		row = append(row, f)
+		if i >= len(s) {
+			rows = append(rows, row)
+			break
+		}
+		switch s[i] {
+		case ',':
+			i++
+			if i == len(s) {
+				row = append(row, csvField{})
+				rows = append(rows, row)
+				return trimTrailing(rows)
+			}
+		case '\r', '\n':
+			if s[i] == '\r' && i+1 < len(s) && s[i+1] == '\n' {
+				i++
+			}
+			i++
+			rows = append(rows, row)
+			row = nil
+			if i == len(s) {
+				return trimTrailing(rows)
+			}
+		}
+	}
+	return trimTrailing(rows)
+}
+
+func trimTrailing(rows [][]csvField) [][]csvField {
+	for len(rows) > 0 {
+		last := rows[len(rows)-1]
+		if len(last) == 1 && last[0].text == "" && !last[0].quoted {
+			rows = rows[:len(rows)-1]
+			continue
+		}
+		break
+	}
+	return rows
 }
 
 // RunOptions configure a collection run.

@@ -72,7 +72,9 @@ func FromMap(name string, m map[string]any, order []string) *Scope {
 		}
 	}
 	for _, k := range order {
-		s.Vars = append(s.Vars, Var{Key: k, Value: m[k], Enabled: true})
+		if v, ok := m[k]; ok {
+			s.Vars = append(s.Vars, Var{Key: k, Value: v, Enabled: true})
+		}
 	}
 	return s
 }
@@ -182,6 +184,15 @@ type Environment struct {
 // ParseEnvironment reads a Postman environment or globals export.
 func ParseEnvironment(data []byte) (*Environment, error) {
 	data = bytes.TrimPrefix(bytes.TrimSpace(data), []byte("\xef\xbb\xbf"))
+	data = collection.DecodeText(data)
+	if len(data) > 0 && data[0] == '[' {
+		// Old globals exports are a bare list of variables.
+		var list []Var
+		if err := json.Unmarshal(data, &list); err != nil {
+			return nil, fmt.Errorf("invalid variables list: %w", err)
+		}
+		return &Environment{Name: "globals", Values: list, Scope: "globals"}, nil
+	}
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(data, &probe); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)

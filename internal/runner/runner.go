@@ -57,6 +57,11 @@ func NewSession(client *httpclient.Client, jar *cookies.Jar, c *collection.Colle
 		s.CollectionVars = vars.NewScope("collection", nil)
 	}
 	s.Local = vars.NewScope("_variables", nil)
+	if s.Environment == nil {
+		// Like newman, variables set via pm.environment without a selected
+		// environment live for the duration of the session.
+		s.Environment = vars.NewScope("", nil)
+	}
 	return s
 }
 
@@ -256,7 +261,9 @@ func (s *Session) Execute(ctx context.Context, item *collection.Item, parents []
 
 	// ---- test scripts ----
 	if tests := scriptsFor(s.Collection, parents, item, "test"); len(tests) > 0 {
-		reqJSON, _ := json.Marshal(sentAsCollectionRequest(resolved, resp))
+		sentReq := sentAsCollectionRequest(resolved, resp)
+		sentReq.Description = req.Description
+		reqJSON, _ := json.Marshal(sentReq)
 		info.EventName = "test"
 		out, err := script.Run(ctx, host, script.Input{
 			Event: "test", Info: info, CollectionName: collName,
@@ -296,12 +303,21 @@ func withData(sc script.Scopes, data []vars.Var) script.Scopes {
 	return sc
 }
 
+// sentAsCollectionRequest describes the request as it went over the wire
+// (final URL, generated and auth headers), which is what test scripts see.
 func sentAsCollectionRequest(r *httpclient.Request, resp *httpclient.Response) *collection.Request {
-	u := r.URL
-	if resp != nil && resp.Request.URL != "" {
-		u = resp.Request.URL
+	out := &collection.Request{Method: r.Method, URL: collection.URL{Raw: r.URL}, Header: r.Header, Body: r.Body, Auth: r.Auth}
+	if resp != nil {
+		out.Method = resp.Request.Method
+		out.URL = collection.URL{Raw: resp.Request.URL}
+		out.Header = nil
+		for _, h := range resp.Request.Header {
+			if !strings.EqualFold(h.Key, "Cookie") {
+				out.Header = append(out.Header, h)
+			}
+		}
 	}
-	return &collection.Request{Method: r.Method, URL: collection.URL{Raw: u}, Header: r.Header, Body: r.Body, Auth: r.Auth}
+	return out
 }
 
 func (s *Session) view(resp *httpclient.Response) *ResponseView {

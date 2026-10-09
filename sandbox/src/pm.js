@@ -801,12 +801,23 @@ function postmanAssertions(chai, utils) {
   });
   A.addMethod('jsonSchema', function (schema, options) {
     const Ajv = globalThis.require('ajv');
-    const ajv = new Ajv(Object.assign({ allErrors: true, strict: false, logger: false }, options || {}));
-    let json;
-    try { json = this._obj.json(); } catch (e) { json = undefined; }
-    const valid = ajv.validate(schema, json);
-    const msg = valid ? '' : ajv.errorsText(ajv.errors);
+    const ajv = new Ajv(Object.assign({ allErrors: true, logger: false }, options || {}));
+    let data = this._obj;
+    if (isResponseLike(data)) {
+      try { data = data.json(); } catch (e) { data = undefined; }
+    }
+    const valid = ajv.validate(schema, data);
+    const msg = valid ? '' : ajv.errorsText(ajv.errors, { separator: '\n' });
     this.assert(valid, `expected data to satisfy schema but found following errors: \n${msg}`, 'expected data to not satisfy schema');
+  });
+  A.addProperty('postmanRequest', function () {
+    this.assert(isRequestLike(this._obj), 'expecting a postman request object but got #{this}', 'not expecting a postman request object');
+  });
+  A.addProperty('postmanResponse', function () {
+    this.assert(this._obj instanceof Response, 'expecting a postman response object but got #{this}', 'not expecting a postman response object');
+  });
+  A.addProperty('postmanRequestOrResponse', function () {
+    this.assert(isRequestLike(this._obj) || this._obj instanceof Response, 'expecting a postman request or response object but got #{this}', 'not expecting a postman request or response object');
   });
   A.addMethod('cookie', function (name, value) {
     const cookies = this._obj.cookies;
@@ -818,8 +829,6 @@ function postmanAssertions(chai, utils) {
     const actual = cookies.get(name);
     this.assert(has && actual === value, `expected cookie '${name}' to have value #{exp} but got #{act}`, `expected cookie '${name}' to not have value #{exp}`, value, actual);
   });
-  A.addMethod('responseTime', function () {});
-  void isRequestLike;
 }
 
 // ---------------------------------------------------------------------------
@@ -976,8 +985,8 @@ function legacyRequest(req) {
   let data = {};
   if (req.body) {
     if (req.body.mode === 'raw') data = req.body.raw || '';
-    else if (req.body.mode === 'urlencoded') data = req.body.urlencoded.toObject(true);
-    else if (req.body.mode === 'formdata') data = req.body.formdata.toObject(true);
+    else if (req.body.mode === 'urlencoded') data = req.body.urlencoded.toObject(true, true, true);
+    else if (req.body.mode === 'formdata') data = req.body.formdata.toObject(true, true, true);
   }
   return { id: req.id, name: req.name, description: req.description, url: req.url.toString(), method: req.method, headers: req.headers.toObject(true), data };
 }
@@ -1051,15 +1060,38 @@ globalThis.__setup = function (json) {
   } else {
     ['responseBody', 'responseCode', 'responseTime', 'responseHeaders', 'responseCookies'].forEach((k) => { delete globalThis[k]; });
   }
+  // Legacy setters stringify truthy values and keep the legacy snapshot
+  // objects in sync, exactly like postman-sandbox's legacy interface.
+  const legacyValue = (v) => ((v === false || v) && typeof (v && v.toString) === 'function' ? v.toString() : v);
   globalThis.postman = {
-    setEnvironmentVariable: (k, v) => scopes.environment.set(k, v),
+    setEnvironmentVariable: (k, v) => {
+      v = legacyValue(v);
+      globalThis.environment[k] = v;
+      scopes.environment.set(k, v, 'any');
+    },
     getEnvironmentVariable: (k) => scopes.environment.get(k),
-    clearEnvironmentVariable: (k) => scopes.environment.unset(k),
-    clearEnvironmentVariables: () => scopes.environment.clear(),
-    setGlobalVariable: (k, v) => scopes.globals.set(k, v),
+    clearEnvironmentVariable: (k) => {
+      delete globalThis.environment[k];
+      scopes.environment.unset(k);
+    },
+    clearEnvironmentVariables: () => {
+      Object.keys(globalThis.environment).forEach((k) => delete globalThis.environment[k]);
+      scopes.environment.clear();
+    },
+    setGlobalVariable: (k, v) => {
+      v = legacyValue(v);
+      globalThis.globals[k] = v;
+      scopes.globals.set(k, v, 'any');
+    },
     getGlobalVariable: (k) => scopes.globals.get(k),
-    clearGlobalVariable: (k) => scopes.globals.unset(k),
-    clearGlobalVariables: () => scopes.globals.clear(),
+    clearGlobalVariable: (k) => {
+      delete globalThis.globals[k];
+      scopes.globals.unset(k);
+    },
+    clearGlobalVariables: () => {
+      Object.keys(globalThis.globals).forEach((k) => delete globalThis.globals[k]);
+      scopes.globals.clear();
+    },
     getVariable: (k) => variablesApi.get(k),
     setNextRequest: (name) => execution.setNextRequest(name),
     getResponseHeader: (k) => (response ? response.headers.get(k) : undefined),

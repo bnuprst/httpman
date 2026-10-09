@@ -472,7 +472,7 @@ func importCmd(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if c, err := ws.ImportCollection(data); err == nil {
+		if c, _, err := ws.ImportCollection(data); err == nil {
 			fmt.Fprintf(stdout, "imported collection %q (%s)\n", c.Info.Name, c.Info.PostmanID)
 			continue
 		}

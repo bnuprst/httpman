@@ -81,6 +81,10 @@ func applyAuth(a *collection.Auth, method string, u *url.URL, h http.Header, bod
 		}
 	case "awsv4":
 		signAWSv4(a, method, u, h, body)
+	case "hawk":
+		if err := signHawk(a, method, u, h, body, time.Now()); err != nil {
+			return st, err
+		}
 	default:
 		*warnings = append(*warnings, fmt.Sprintf("auth type %q is not supported; request sent without it", a.Type))
 	}
@@ -386,4 +390,60 @@ func signAWSv4(a *collection.Auth, method string, u *url.URL, h http.Header, bod
 	sig := hex.EncodeToString(mac(k, toSign))
 	h.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
 		a.Get("accessKey"), scope, strings.Join(names, ";"), sig))
+}
+
+// ---- Hawk ----
+
+func signHawk(a *collection.Auth, method string, u *url.URL, h http.Header, body []byte, now time.Time) error {
+	var hf func() hash.Hash
+	switch strings.ToLower(defaultStr(a.Get("algorithm"), "sha256")) {
+	case "sha256":
+		hf = sha256.New
+	case "sha1":
+		hf = sha1.New
+	default:
+		return fmt.Errorf("hawk: unsupported algorithm %q", a.Get("algorithm"))
+	}
+	ts := defaultStr(a.Get("timestamp"), strconv.FormatInt(now.Unix(), 10))
+	nonce := defaultStr(a.Get("nonce"), randomHex(3))
+	ext := a.Get("extraData")
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if u.Scheme == "https" {
+			port = "443"
+		}
+	}
+	payloadHash := ""
+	if a.Get("includePayloadHash") == "true" {
+		ct := strings.ToLower(strings.TrimSpace(strings.Split(h.Get("Content-Type"), ";")[0]))
+		ph := hf()
+		ph.Write([]byte("hawk.1.payload\n" + ct + "\n" + string(body) + "\n"))
+		payloadHash = base64.StdEncoding.EncodeToString(ph.Sum(nil))
+	}
+	normalized := "hawk.1.header\n" + ts + "\n" + nonce + "\n" + strings.ToUpper(method) + "\n" + u.RequestURI() + "\n" +
+		strings.ToLower(u.Hostname()) + "\n" + port + "\n" + payloadHash + "\n" + strings.ReplaceAll(strings.ReplaceAll(ext, "\\", "\\\\"), "\n", "\\n") + "\n"
+	app, dlg := a.Get("app"), a.Get("delegation")
+	if app != "" {
+		normalized += app + "\n" + dlg + "\n"
+	}
+	m := hmac.New(hf, []byte(a.Get("authKey")))
+	m.Write([]byte(normalized))
+	mac := base64.StdEncoding.EncodeToString(m.Sum(nil))
+	parts := []string{fmt.Sprintf(`id="%s"`, a.Get("authId")), fmt.Sprintf(`ts="%s"`, ts), fmt.Sprintf(`nonce="%s"`, nonce)}
+	if payloadHash != "" {
+		parts = append(parts, fmt.Sprintf(`hash="%s"`, payloadHash))
+	}
+	if ext != "" {
+		parts = append(parts, fmt.Sprintf(`ext="%s"`, strings.ReplaceAll(ext, `"`, `\"`)))
+	}
+	parts = append(parts, fmt.Sprintf(`mac="%s"`, mac))
+	if app != "" {
+		parts = append(parts, fmt.Sprintf(`app="%s"`, app))
+		if dlg != "" {
+			parts = append(parts, fmt.Sprintf(`dlg="%s"`, dlg))
+		}
+	}
+	h.Set("Authorization", "Hawk "+strings.Join(parts, ", "))
+	return nil
 }

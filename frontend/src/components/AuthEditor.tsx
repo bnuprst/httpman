@@ -58,6 +58,22 @@ const TYPES: { id: string; label: string; fields: Field[] }[] = [
     ],
   },
   {
+    id: 'hawk',
+    label: 'Hawk Authentication',
+    fields: [
+      { key: 'authId', label: 'Hawk Auth ID' },
+      { key: 'authKey', label: 'Hawk Auth Key', type: 'password' },
+      { key: 'algorithm', label: 'Algorithm', type: 'select', options: ['sha256', 'sha1'], def: 'sha256' },
+      { key: 'user', label: 'User', placeholder: 'optional' },
+      { key: 'nonce', label: 'Nonce', placeholder: 'auto' },
+      { key: 'extraData', label: 'ext', placeholder: 'optional' },
+      { key: 'app', label: 'app', placeholder: 'optional' },
+      { key: 'delegation', label: 'dlg', placeholder: 'optional' },
+      { key: 'timestamp', label: 'Timestamp', placeholder: 'auto' },
+      { key: 'includePayloadHash', label: 'Include payload hash', type: 'checkbox', def: 'false' },
+    ],
+  },
+  {
     id: 'awsv4',
     label: 'AWS Signature',
     fields: [

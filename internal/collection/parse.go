@@ -2,10 +2,12 @@ package collection
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/google/uuid"
 )
@@ -13,7 +15,7 @@ import (
 // Parse reads a collection in v1, v2.0 or v2.1 format and returns it
 // normalized to v2.1, with ids assigned to every item.
 func Parse(data []byte) (*Collection, error) {
-	data = bytes.TrimPrefix(bytes.TrimSpace(data), []byte("\xef\xbb\xbf"))
+	data = DecodeText(data)
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(data, &probe); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
@@ -29,6 +31,21 @@ func Parse(data []byte) (*Collection, error) {
 		if err := json.Unmarshal(data, c); err != nil {
 			return nil, fmt.Errorf("invalid collection: %w", err)
 		}
+	case probe["item"] != nil:
+		// v2 without an info block (accepted by Postman's SDK and newman).
+		c = &Collection{}
+		if err := json.Unmarshal(data, c); err != nil {
+			return nil, fmt.Errorf("invalid collection: %w", err)
+		}
+		var top struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(data, &top)
+		c.Info.Name, c.Info.PostmanID = top.Name, top.ID
+		if c.Info.Name == "" {
+			c.Info.Name = "Untitled Collection"
+		}
 	case probe["requests"] != nil || probe["order"] != nil:
 		var err error
 		c, err = convertV1(data)
@@ -40,6 +57,26 @@ func Parse(data []byte) (*Collection, error) {
 	}
 	Normalize(c)
 	return c, nil
+}
+
+// DecodeText converts UTF-16 (with BOM) to UTF-8 and strips a UTF-8 BOM
+// and surrounding whitespace.
+func DecodeText(b []byte) []byte {
+	switch {
+	case len(b) >= 2 && b[0] == 0xff && b[1] == 0xfe:
+		return bytes.TrimSpace([]byte(string(utf16.Decode(u16(b[2:], binary.LittleEndian)))))
+	case len(b) >= 2 && b[0] == 0xfe && b[1] == 0xff:
+		return bytes.TrimSpace([]byte(string(utf16.Decode(u16(b[2:], binary.BigEndian)))))
+	}
+	return bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(b), []byte("\xef\xbb\xbf")))
+}
+
+func u16(b []byte, order binary.ByteOrder) []uint16 {
+	out := make([]uint16, len(b)/2)
+	for i := range out {
+		out[i] = order.Uint16(b[2*i:])
+	}
+	return out
 }
 
 // Normalize fills defaults: schema, ids, non-nil item lists.

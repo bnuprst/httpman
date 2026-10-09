@@ -281,3 +281,36 @@ func TestTimeout(t *testing.T) {
 		t.Errorf("errors: %+v", out.Errors)
 	}
 }
+
+func TestLegacySandboxCompat(t *testing.T) {
+	out, _ := run(t, Input{Event: "test", Response: jsonResponse(200, `{"args":{}}`)}, `
+postman.setEnvironmentVariable("zero", 0);
+postman.setEnvironmentVariable("one", 1);
+tests["legacy setter keeps 0"] = postman.getEnvironmentVariable("zero") === 0;
+tests["legacy setter stringifies"] = postman.getEnvironmentVariable("one") === "1";
+tests["snapshot synced"] = environment.one === "1";
+tests["sugar has"] = responseBody.has("args");
+tests["sugar none"] = [1, 2].none(3);
+pm.test("jsonSchema on values", () => {
+  pm.expect({a: true}).to.be.jsonSchema({properties: {a: {type: "boolean"}}});
+  pm.expect(() => pm.expect({a: 1}).to.be.jsonSchema({properties: {a: {type: "boolean"}}}))
+    .to.throw("expected data to satisfy schema but found following errors: \ndata.a should be boolean");
+});
+pm.test("postman chai props", () => {
+  pm.response.to.be.a.postmanResponse;
+  pm.request.to.be.a.postmanRequest;
+  pm.response.to.not.be.a.postmanRequest;
+});
+`)
+	if len(out.Errors) > 0 {
+		t.Fatalf("errors: %+v", out.Errors)
+	}
+	for _, r := range out.Tests {
+		if !r.Passed {
+			t.Errorf("%s failed: %+v", r.Name, r.Error)
+		}
+	}
+	if len(out.Tests) != 7 {
+		t.Errorf("tests: %d", len(out.Tests))
+	}
+}

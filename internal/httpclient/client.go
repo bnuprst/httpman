@@ -136,9 +136,19 @@ func (c *Client) Options() Options { return c.opts }
 
 // RequestOverrides are per-request settings (protocolProfileBehavior).
 type RequestOverrides struct {
-	FollowRedirects *bool
-	MaxRedirects    *int
-	StrictSSL       *bool
+	FollowRedirects         *bool
+	MaxRedirects            *int
+	StrictSSL               *bool
+	FollowOriginalMethod    *bool
+	RemoveRefererOnRedirect *bool
+}
+
+func isRedirect(code int) bool {
+	switch code {
+	case 301, 302, 303, 307, 308:
+		return true
+	}
+	return false
 }
 
 // Do sends the request.
@@ -207,29 +217,25 @@ func (c *Client) Do(ctx context.Context, r *Request, ov RequestOverrides) (*Resp
 	if ov.MaxRedirects != nil {
 		maxRedirects = *ov.MaxRedirects
 	}
-	var redirects []string
+	followOriginal := ov.FollowOriginalMethod != nil && *ov.FollowOriginalMethod
+	removeReferer := ov.RemoveRefererOnRedirect != nil && *ov.RemoveRefererOnRedirect
+
+	// Redirects are followed manually so that Postman's protocol profile
+	// options (keep method, referer handling) can be honored.
 	hc := &http.Client{
-		Transport: transport,
-		Timeout:   c.opts.Timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if !follow {
-				return http.ErrUseLastResponse
-			}
-			if len(via) > maxRedirects {
-				return fmt.Errorf("exceeded maximum of %d redirects", maxRedirects)
-			}
-			redirects = append(redirects, req.URL.String())
-			return nil
-		},
+		Transport:     transport,
+		Timeout:       c.opts.Timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	if !c.opts.DisableCookies && c.opts.Jar != nil {
 		hc.Jar = c.opts.Jar
 	}
 
-	send := func(h http.Header) (*http.Response, *SentRequest, *Timings, time.Time, error) {
+	start := time.Now()
+	send := func(method string, u *url.URL, h http.Header, body []byte) (*http.Response, *SentRequest, *Timings, error) {
 		req, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(body))
 		if err != nil {
-			return nil, nil, nil, time.Time{}, err
+			return nil, nil, nil, err
 		}
 		if len(body) == 0 {
 			req.Body = http.NoBody
@@ -241,7 +247,7 @@ func (c *Client) Do(ctx context.Context, r *Request, ov RequestOverrides) (*Resp
 		}
 		tm := &Timings{}
 		var dnsStart, connStart, tlsStart time.Time
-		start := time.Now()
+		reqStart := time.Now()
 		trace := &httptrace.ClientTrace{
 			DNSStart:          func(httptrace.DNSStartInfo) { dnsStart = time.Now() },
 			DNSDone:           func(httptrace.DNSDoneInfo) { tm.DNS = ms(time.Since(dnsStart)) },
@@ -250,16 +256,16 @@ func (c *Client) Do(ctx context.Context, r *Request, ov RequestOverrides) (*Resp
 			TLSHandshakeStart: func() { tlsStart = time.Now() },
 			TLSHandshakeDone:  func(tls.ConnectionState, error) { tm.TLS = ms(time.Since(tlsStart)) },
 			GotFirstResponseByte: func() {
-				tm.FirstByte = ms(time.Since(start))
+				tm.FirstByte = ms(time.Since(reqStart))
 			},
 		}
 		req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 		sent := &SentRequest{Method: method, URL: u.String(), Header: sortedHeaders(req.Header)}
+		hostHeader := u.Host
 		if host != "" {
-			sent.Header = append(collection.Headers{{Key: "Host", Value: host}}, sent.Header...)
-		} else {
-			sent.Header = append(collection.Headers{{Key: "Host", Value: u.Host}}, sent.Header...)
+			hostHeader = host
 		}
+		sent.Header = append(collection.Headers{{Key: "Host", Value: hostHeader}}, sent.Header...)
 		if hc.Jar != nil {
 			var cs []string
 			for _, ck := range hc.Jar.Cookies(u) {
@@ -271,23 +277,60 @@ func (c *Client) Do(ctx context.Context, r *Request, ov RequestOverrides) (*Resp
 		}
 		sent.Body = previewBody(body)
 		resp, err := hc.Do(req)
-		return resp, sent, tm, start, err
+		return resp, sent, tm, err
 	}
 
-	resp, sent, tm, start, err := send(header)
+	resp, sent, tm, err := send(method, u, header, body)
 	if err == nil && authState.digest != nil && resp.StatusCode == http.StatusUnauthorized {
 		if chal := resp.Header.Get("Www-Authenticate"); strings.HasPrefix(strings.ToLower(chal), "digest") {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
-			h2 := header.Clone()
 			if v, derr := authState.digest.authorize(chal, method, u, body); derr == nil {
-				h2.Set("Authorization", v)
-				resp, sent, tm, start, err = send(h2)
+				header = header.Clone()
+				header.Set("Authorization", v)
 			} else {
 				warnings = append(warnings, "digest auth: "+derr.Error())
-				resp, sent, tm, start, err = send(header)
 			}
+			resp, sent, tm, err = send(method, u, header, body)
 		}
+	}
+
+	var redirects []string
+	curMethod, curURL, curHeader, curBody := method, u, header, body
+	for err == nil && follow && isRedirect(resp.StatusCode) && resp.Header.Get("Location") != "" {
+		if len(redirects) >= maxRedirects {
+			resp.Body.Close()
+			err = fmt.Errorf("exceeded maxRedirects (%d), probably stuck in a redirect loop", maxRedirects)
+			break
+		}
+		next, perr := curURL.Parse(resp.Header.Get("Location"))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if perr != nil {
+			err = fmt.Errorf("invalid redirect location %q: %w", resp.Header.Get("Location"), perr)
+			break
+		}
+		h := curHeader.Clone()
+		switch code := resp.StatusCode; {
+		case code == 307 || code == 308 || followOriginal:
+		case curMethod != "HEAD":
+			curMethod, curBody = "GET", nil
+			h.Del("Content-Type")
+			h.Del("Content-Length")
+		}
+		if next.Host != curURL.Host {
+			h.Del("Authorization")
+			host = ""
+		}
+		if !removeReferer {
+			ref := *curURL
+			ref.User = nil
+			ref.Fragment = ""
+			h.Set("Referer", ref.String())
+		}
+		redirects = append(redirects, next.String())
+		curURL, curHeader = next, h
+		resp, sent, tm, err = send(curMethod, curURL, curHeader, curBody)
 	}
 	if err != nil {
 		var ue *url.Error
@@ -336,9 +379,6 @@ func (c *Client) Do(ctx context.Context, r *Request, ov RequestOverrides) (*Resp
 		}
 	}
 	out.HeaderSize = hs
-	if resp.Request != nil && resp.Request.URL != nil {
-		out.Request.URL = resp.Request.URL.String()
-	}
 	return out, nil
 }
 
@@ -466,9 +506,6 @@ func buildBody(b *collection.Body, baseDir string) ([]byte, string, error) {
 			"javascript": "application/javascript",
 			"text":       "text/plain",
 		}[b.RawLanguage()]
-		if ct == "" && b.Raw != "" {
-			ct = "text/plain"
-		}
 		return []byte(b.Raw), ct, nil
 	case "urlencoded":
 		var parts []string
