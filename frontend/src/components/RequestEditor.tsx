@@ -103,7 +103,7 @@ export default function RequestEditor({ tab }: { tab: RequestTab }) {
               {m}
             </option>
           ))}
-          {!METHODS.includes(req.method) && <option value="__custom" className="m-custom">{req.method}</option>}
+          {!METHODS.includes(req.method) && <option value="__custom">{req.method}</option>}
         </select>
         <VarInput
           className="url-input"

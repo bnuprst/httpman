@@ -713,12 +713,11 @@ input[type='radio'] {
   background-color: var(--bg2) !important;
 }
 
-.method-select option {
-  background-color: var(--panel);
-}
-
-.method-select .m-custom {
+/* Options default to plain text so uncolored methods (TRACE, COPY, …) don't
+   inherit the selected method's color; :where() keeps .m-* colors winning. */
+:where(.method-select option) {
   color: var(--text);
+  background-color: var(--panel);
 }
 
 .url-input {
