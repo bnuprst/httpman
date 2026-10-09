@@ -1,0 +1,1 @@
+module.exports = { setTimeout: (...a) => globalThis.setTimeout(...a), clearTimeout: (t) => globalThis.clearTimeout(t), setInterval: (...a) => globalThis.setInterval(...a), clearInterval: (t) => globalThis.clearInterval(t), setImmediate: (fn, ...a) => globalThis.setTimeout(fn, 0, ...a), clearImmediate: (t) => globalThis.clearTimeout(t) };

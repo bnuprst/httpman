@@ -1,0 +1,8 @@
+node_modules/
+/build/bin/
+/frontend/dist/
+/dist/
+/npm/*/bin/httpman*
+!/npm/httpman/bin/httpman.js
+*.exe
+.DS_Store
