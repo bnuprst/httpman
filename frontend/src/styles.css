@@ -575,10 +575,40 @@ input[type='radio'] {
   align-items: stretch;
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tab-strip {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.tab-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-arrow {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 16px;
+  color: var(--text);
   flex-shrink: 0;
-  scrollbar-width: thin;
+}
+
+.tab-arrow:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.tab-arrow:disabled {
+  color: var(--muted);
+  opacity: 0.4;
+  cursor: default;
 }
 
 .tab {
@@ -643,6 +673,7 @@ input[type='radio'] {
 }
 
 .tab-new {
+  flex-shrink: 0;
   border: none;
   background: none;
   cursor: pointer;
@@ -711,6 +742,13 @@ input[type='radio'] {
   border-radius: 3px 0 0 3px !important;
   font-weight: 700;
   background-color: var(--bg2) !important;
+}
+
+/* Options default to plain text so uncolored methods (TRACE, COPY, …) don't
+   inherit the selected method's color; :where() keeps .m-* colors winning. */
+:where(.method-select option) {
+  color: var(--text);
+  background-color: var(--panel);
 }
 
 .url-input {

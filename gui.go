@@ -62,12 +62,16 @@ func runGUI(args []string) error {
 		return fmt.Errorf("opening workspace %s: %w", dir, err)
 	}
 	a := app.New(ws, version)
+	// Start maximised so the header is never off screen on small displays.
+	// The restored size fits 1366x768 at 100% scaling; the minimums also fit
+	// it at 125% (~1090x580 usable).
 	return wails.Run(&options.App{
 		Title:            "httpman",
-		Width:            1360,
-		Height:           860,
-		MinWidth:         900,
-		MinHeight:        560,
+		WindowStartState: options.Maximised,
+		Width:            1280,
+		Height:           720,
+		MinWidth:         800,
+		MinHeight:        480,
 		BackgroundColour: &options.RGBA{R: 30, G: 30, B: 30, A: 255},
 		AssetServer:      &assetserver.Options{Assets: assets},
 		OnStartup: func(ctx context.Context) {

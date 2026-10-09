@@ -71,6 +71,12 @@ const outDir = path.join(root, 'dist', 'bin', `${goos}-${goarch}`);
 fs.mkdirSync(outDir, { recursive: true });
 const out = path.join(outDir, goos === 'windows' ? 'httpman.exe' : 'httpman');
 const env = { ...process.env, GOOS: goos, GOARCH: goarch, CGO_ENABLED: goos === 'windows' || nogui ? '0' : '1' };
+if (goos === 'darwin' && !nogui) {
+  // Mirror `wails build`: Wails' dialogs use UTType, which plain `go build` doesn't link.
+  const extra = ['-framework UniformTypeIdentifiers'];
+  if (!/-mmacosx-version-min/.test(env.CGO_LDFLAGS || '')) extra.push('-mmacosx-version-min=10.13');
+  env.CGO_LDFLAGS = [env.CGO_LDFLAGS, ...extra].filter(Boolean).join(' ');
+}
 try {
   run('go', ['build', '-trimpath', '-tags', tags.join(','), '-ldflags', ldflags.join(' '), '-o', out, '.'], { env });
 } finally {

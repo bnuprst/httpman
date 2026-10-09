@@ -99,7 +99,7 @@ export default function RequestEditor({ tab }: { tab: RequestTab }) {
       <div className="url-bar">
         <select className={'method-select ' + methodClass(req.method)} value={METHODS.includes(req.method) ? req.method : '__custom'} onChange={(e) => setReq({ method: e.target.value })}>
           {METHODS.map((m) => (
-            <option key={m} value={m}>
+            <option key={m} value={m} className={methodClass(m)}>
               {m}
             </option>
           ))}

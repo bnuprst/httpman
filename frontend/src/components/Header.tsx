@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { tabTitle, useStore } from '../store';
 import { varValueString } from '../util';
 import { Menu } from './Modal';
@@ -143,42 +143,92 @@ export function TabBar() {
       });
     } else st.closeTab(id);
   };
+  const strip = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  const updateEdges = () => {
+    const el = strip.current;
+    if (!el) return;
+    const left = el.scrollLeft > 0;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setEdges((p) => (p.left === left && p.right === right ? p : { left, right }));
+  };
+  useEffect(() => {
+    const el = strip.current;
+    if (!el) return;
+    // Vertical wheel scrolls the strip horizontally. Needs a non-passive listener to preventDefault.
+    const wheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      e.preventDefault();
+      el.scrollLeft += Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    };
+    el.addEventListener('wheel', wheel, { passive: false });
+    const ro = new ResizeObserver(updateEdges);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('wheel', wheel);
+      ro.disconnect();
+    };
+  }, []);
+  // Keep the active tab visible. Adjust scrollLeft directly: scrollIntoView would also scroll the app shell.
+  useEffect(() => {
+    const el = strip.current;
+    const tab = el?.querySelector<HTMLElement>('.tab.active');
+    if (el && tab) {
+      if (tab.offsetLeft < el.scrollLeft) el.scrollLeft = tab.offsetLeft;
+      else if (tab.offsetLeft + tab.offsetWidth > el.scrollLeft + el.clientWidth) el.scrollLeft = tab.offsetLeft + tab.offsetWidth - el.clientWidth;
+    }
+    updateEdges();
+  }, [st.activeTabId, st.tabs.length]);
+  const scrollBy = (dir: number) => strip.current?.scrollBy({ left: dir * Math.max(150, strip.current.clientWidth * 0.6), behavior: 'smooth' });
+  const overflow = edges.left || edges.right;
   return (
     <div className="tabbar">
-      {st.tabs.map((t) => (
-        <div
-          key={t.id}
-          className={'tab' + (t.id === st.activeTabId ? ' active' : '')}
-          onClick={() => st.activate(t.id)}
-          onMouseDown={(e) => {
-            if (e.button === 1) {
-              e.preventDefault();
-              close(t.id);
-            }
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setMenu({ x: e.clientX, y: e.clientY, id: t.id });
-          }}
-          title={tabTitle(t, st)}
-        >
-          {t.kind === 'request' && <span className={'tab-method m-' + t.draft.request!.method.toLowerCase()}>{t.draft.request!.method}</span>}
-          {t.kind === 'environment' && <span className="tab-kind">ENV</span>}
-          {t.kind === 'collection' && <span className="tab-kind">{t.folderId ? 'DIR' : 'COL'}</span>}
-          {t.kind === 'runner' && <span className="tab-kind">RUN</span>}
-          <span className="tab-title">{tabTitle(t, st)}</span>
-          {t.dirty ? <span className="tab-dirty">●</span> : null}
-          <button
-            className="tab-close"
-            onClick={(e) => {
-              e.stopPropagation();
-              close(t.id);
+      {overflow && (
+        <button className="tab-arrow" title="Scroll tabs left" disabled={!edges.left} onClick={() => scrollBy(-1)}>
+          ‹
+        </button>
+      )}
+      <div className="tab-strip" ref={strip} onScroll={updateEdges}>
+        {st.tabs.map((t) => (
+          <div
+            key={t.id}
+            className={'tab' + (t.id === st.activeTabId ? ' active' : '')}
+            onClick={() => st.activate(t.id)}
+            onMouseDown={(e) => {
+              if (e.button === 1) {
+                e.preventDefault();
+                close(t.id);
+              }
             }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu({ x: e.clientX, y: e.clientY, id: t.id });
+            }}
+            title={tabTitle(t, st)}
           >
-            ×
-          </button>
-        </div>
-      ))}
+            {t.kind === 'request' && <span className={'tab-method m-' + t.draft.request!.method.toLowerCase()}>{t.draft.request!.method}</span>}
+            {t.kind === 'environment' && <span className="tab-kind">ENV</span>}
+            {t.kind === 'collection' && <span className="tab-kind">{t.folderId ? 'DIR' : 'COL'}</span>}
+            {t.kind === 'runner' && <span className="tab-kind">RUN</span>}
+            <span className="tab-title">{tabTitle(t, st)}</span>
+            {t.dirty ? <span className="tab-dirty">●</span> : null}
+            <button
+              className="tab-close"
+              onClick={(e) => {
+                e.stopPropagation();
+                close(t.id);
+              }}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      {overflow && (
+        <button className="tab-arrow" title="Scroll tabs right" disabled={!edges.right} onClick={() => scrollBy(1)}>
+          ›
+        </button>
+      )}
       <button className="tab-new" title="New request (Ctrl+T)" onClick={() => st.newRequest()}>
         ＋
       </button>
