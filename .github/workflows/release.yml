@@ -60,6 +60,7 @@ jobs:
     needs: build
     if: ${{ !cancelled() && (github.event_name == 'push' || github.event.inputs.publish == 'true') }}
     runs-on: ubuntu-latest
+    environment: npm # NPM_TOKEN is an environment secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
