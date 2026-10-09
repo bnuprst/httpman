@@ -43,6 +43,20 @@ type Session struct {
 
 	mu      sync.Mutex
 	current string // name of the executing item, for console attribution
+	vm      *script.VM
+}
+
+// scripts runs scripts in the session's VM, which is shared by all requests
+// of the session like Postman's sandbox context.
+func (s *Session) scripts(ctx context.Context, host script.Host, in script.Input, srcs []script.Source) (*script.Output, error) {
+	if s.vm == nil || s.vm.Broken() {
+		vm, err := script.Acquire()
+		if err != nil {
+			return nil, err
+		}
+		s.vm = vm
+	}
+	return s.vm.Run(ctx, host, in, srcs)
 }
 
 // NewSession creates a session; nil scopes are replaced by empty ones.
@@ -214,7 +228,7 @@ func (s *Session) Execute(ctx context.Context, item *collection.Item, parents []
 	if pre := scriptsFor(s.Collection, parents, item, "prerequest"); len(pre) > 0 {
 		reqJSON, _ := json.Marshal(req)
 		info.EventName = "prerequest"
-		out, err := script.Run(ctx, host, script.Input{
+		out, err := s.scripts(ctx, host, script.Input{
 			Event: "prerequest", Info: info, CollectionName: collName,
 			Scopes: withData(s.scopesForScript(), dataVars), Request: reqJSON,
 		}, pre)
@@ -265,7 +279,7 @@ func (s *Session) Execute(ctx context.Context, item *collection.Item, parents []
 		sentReq.Description = req.Description
 		reqJSON, _ := json.Marshal(sentReq)
 		info.EventName = "test"
-		out, err := script.Run(ctx, host, script.Input{
+		out, err := s.scripts(ctx, host, script.Input{
 			Event: "test", Info: info, CollectionName: collName,
 			Scopes: withData(s.scopesForScript(), dataVars), Request: reqJSON,
 			Response: scriptResponse(resp, ex.Response.Cookies),

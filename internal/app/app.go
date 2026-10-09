@@ -64,6 +64,7 @@ func New(ws *workspace.Workspace, version string) *App {
 	}
 	a.jar.OnChange = a.scheduleJarSave
 	a.rebuildClient()
+	script.EnablePrewarm()
 	return a
 }
 

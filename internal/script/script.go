@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -142,38 +143,122 @@ type Output struct {
 // DefaultTimeout bounds a single event (all scripts of a prerequest or test phase).
 var DefaultTimeout = 60 * time.Second
 
-// Run executes scripts in order within one JS context and returns the
-// resulting state. A returned error means the sandbox itself failed;
-// errors thrown by user scripts are reported in Output.Errors.
-func Run(ctx context.Context, host Host, in Input, sources []Source) (*Output, error) {
+// VM is a JavaScript context with the sandbox loaded. Initializing the
+// sandbox is comparatively expensive, so a VM is reused for all scripts of a
+// collection run (as Postman does) and warm VMs are kept ready for one-off
+// requests. A VM must not be used concurrently.
+type VM struct {
+	mu     sync.Mutex
+	rt     *goja.Runtime
+	ctx    context.Context
+	host   Host
+	broken bool
+}
+
+// NewVM creates a VM with the sandbox initialized.
+func NewVM() (*VM, error) {
 	prog, err := compiled()
 	if err != nil {
 		return nil, fmt.Errorf("sandbox bundle: %w", err)
+	}
+	vm := &VM{rt: goja.New(), ctx: context.Background()}
+	vm.rt.SetMaxCallStackSize(5000)
+	vm.installHost()
+	if _, err := vm.rt.RunProgram(prog); err != nil {
+		return nil, fmt.Errorf("sandbox init: %w", err)
+	}
+	return vm, nil
+}
+
+// Broken reports whether the VM was left in an unusable state (timeout).
+func (vm *VM) Broken() bool {
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	return vm.broken
+}
+
+var (
+	warm      = make(chan *VM, 1)
+	prewarm   atomic.Bool
+	refilling atomic.Bool
+)
+
+// EnablePrewarm keeps an initialized VM ready so interactive requests do
+// not pay the sandbox start-up cost.
+func EnablePrewarm() {
+	prewarm.Store(true)
+	go refill()
+}
+
+func refill() {
+	if !refilling.CompareAndSwap(false, true) {
+		return
+	}
+	defer refilling.Store(false)
+	if len(warm) > 0 {
+		return
+	}
+	if vm, err := NewVM(); err == nil {
+		select {
+		case warm <- vm:
+		default:
+		}
+	}
+}
+
+// Acquire returns a fresh VM, from the warm pool when available.
+func Acquire() (*VM, error) {
+	defer func() {
+		if prewarm.Load() {
+			go refill()
+		}
+	}()
+	select {
+	case vm := <-warm:
+		return vm, nil
+	default:
+		return NewVM()
+	}
+}
+
+// Run executes scripts in a fresh VM. See VM.Run.
+func Run(ctx context.Context, host Host, in Input, sources []Source) (*Output, error) {
+	vm, err := Acquire()
+	if err != nil {
+		return nil, err
+	}
+	return vm.Run(ctx, host, in, sources)
+}
+
+// Run executes scripts in order within the VM and returns the resulting
+// state. A returned error means the sandbox itself failed; errors thrown by
+// user scripts are reported in Output.Errors.
+func (vm *VM) Run(ctx context.Context, host Host, in Input, sources []Source) (*Output, error) {
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	if vm.broken {
+		return nil, errors.New("sandbox is unusable after a timeout")
 	}
 	if _, ok := ctx.Deadline(); !ok && DefaultTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, DefaultTimeout)
 		defer cancel()
 	}
-
-	vm := goja.New()
-	vm.SetMaxCallStackSize(5000)
-	stop := context.AfterFunc(ctx, func() { vm.Interrupt(ctx.Err()) })
+	rt := vm.rt
+	vm.ctx, vm.host = ctx, host
+	defer func() { vm.ctx, vm.host = context.Background(), nil }()
+	stop := context.AfterFunc(ctx, func() { rt.Interrupt(ctx.Err()) })
 	defer stop()
 
-	installHost(ctx, vm, host)
-	if _, err := vm.RunProgram(prog); err != nil {
-		return nil, fmt.Errorf("sandbox init: %w", err)
-	}
 	stateJSON, err := json.Marshal(in)
 	if err != nil {
 		return nil, err
 	}
-	setup, _ := goja.AssertFunction(vm.Get("__setup"))
-	if _, err := setup(goja.Undefined(), vm.ToValue(string(stateJSON))); err != nil {
+	setup, _ := goja.AssertFunction(rt.Get("__setup"))
+	if _, err := setup(goja.Undefined(), rt.ToValue(string(stateJSON))); err != nil {
+		vm.broken = true
 		return nil, fmt.Errorf("sandbox setup: %w", err)
 	}
-	scriptError, _ := goja.AssertFunction(vm.Get("__scriptError"))
 
 	var extra []ErrorInfo
 	for _, src := range sources {
@@ -184,26 +269,28 @@ func Run(ctx context.Context, host Host, in Input, sources []Source) (*Output, e
 		// `await` are allowed. Keep the first line on the wrapper line so
 		// reported line numbers match the editor.
 		code := "(async function(){" + src.Code + "\n})().catch(function(e){__scriptError(e)})"
-		_, err := vm.RunScript(src.Name, code)
+		_, err := rt.RunScript(src.Name, code)
 		if err != nil {
 			if ie := (*goja.InterruptedError)(nil); errors.As(err, &ie) {
 				extra = append(extra, ErrorInfo{Name: "TimeoutError", Message: "script execution timed out", Source: src.Name})
+				vm.broken = true
 				break
 			}
 			extra = append(extra, jsError(err, src.Name))
 			continue
 		}
-		if err := drain(ctx, vm); err != nil {
+		if err := drain(ctx, rt); err != nil {
 			extra = append(extra, ErrorInfo{Name: "TimeoutError", Message: "script execution timed out", Source: src.Name})
+			vm.broken = true
 			break
 		}
 	}
-	_ = scriptError
 
-	vm.ClearInterrupt()
-	finish, _ := goja.AssertFunction(vm.Get("__finish"))
+	rt.ClearInterrupt()
+	finish, _ := goja.AssertFunction(rt.Get("__finish"))
 	res, err := finish(goja.Undefined())
 	if err != nil {
+		vm.broken = true
 		return nil, fmt.Errorf("sandbox finish: %w", err)
 	}
 	out := &Output{}
@@ -276,12 +363,13 @@ func jsError(err error, source string) ErrorInfo {
 	return ErrorInfo{Name: "Error", Message: err.Error(), Source: source}
 }
 
-func installHost(ctx context.Context, vm *goja.Runtime, host Host) {
+func (v *VM) installHost() {
+	vm := v.rt
 	h := vm.NewObject()
 	throw := func(err error) { panic(vm.NewGoError(err)) }
 	_ = h.Set("log", func(level, msg string) {
-		if host != nil {
-			host.Log(level, msg)
+		if v.host != nil {
+			v.host.Log(level, msg)
 		}
 	})
 	_ = h.Set("dynamic", func(name string) goja.Value {
@@ -303,10 +391,10 @@ func installHost(ctx context.Context, vm *goja.Runtime, host Host) {
 		return vm.NewArray(out...)
 	})
 	_ = h.Set("send", func(reqJSON string) string {
-		if host == nil {
+		if v.host == nil {
 			return `{"error":"sendRequest is not available"}`
 		}
-		res, err := host.Send(ctx, json.RawMessage(reqJSON))
+		res, err := v.host.Send(v.ctx, json.RawMessage(reqJSON))
 		if err != nil {
 			b, _ := json.Marshal(map[string]string{"error": err.Error()})
 			return string(b)
@@ -314,10 +402,10 @@ func installHost(ctx context.Context, vm *goja.Runtime, host Host) {
 		return string(res)
 	})
 	_ = h.Set("cookies", func(op, args string) string {
-		if host == nil {
+		if v.host == nil {
 			return `{"error":"cookie jar is not available"}`
 		}
-		res, err := host.Cookies(op, json.RawMessage(args))
+		res, err := v.host.Cookies(op, json.RawMessage(args))
 		var b []byte
 		if err != nil {
 			b, _ = json.Marshal(map[string]string{"error": err.Error()})
