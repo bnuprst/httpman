@@ -66,6 +66,15 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
+      - name: Check npm token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::The NPM_TOKEN repository secret is not set. Add an npm automation/granular token under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          npm whoami
       - uses: actions/download-artifact@v4
         with:
           path: dist/bin
@@ -95,6 +104,10 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          node scripts/npm-package.mjs "${VERSION#v}"
-          for d in dist/npm/httpman-app-*/; do npm publish --access public "$d"; done
-          npm publish --access public dist/npm/httpman-app
+          node scripts/npm-package.mjs "${VERSION#v}" --require-all
+          # Platform packages first, launcher last; skip versions already on the registry so a re-run can finish a partial publish.
+          for d in dist/npm/httpman-app-*/ dist/npm/httpman-app/; do
+            spec="$(node -p "const p=require('./$d/package.json'); p.name+'@'+p.version")"
+            if npm view "$spec" version >/dev/null 2>&1; then echo "skip $spec (already published)"; continue; fi
+            npm publish --access public "$d"
+          done
