@@ -137,7 +137,9 @@ Push a tag `vX.Y.Z`. The release workflow does the following:
 
 1. Builds the binaries on Windows, macOS and Linux.
 2. Attaches them to a GitHub release.
-3. Publishes the npm packages. This needs an `NPM_TOKEN` repository secret.
+3. Stages the npm packages through npm trusted publishing. Each package trusts `release.yml` in the `npm` environment, so no npm token is stored.
+
+Then approve the staged versions with 2FA: run `npm stage list` and `npm stage approve <id>` for each one, approving the platform packages before `httpman-app`.
 
 ## License
 

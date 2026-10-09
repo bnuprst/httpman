@@ -60,24 +60,17 @@ jobs:
     needs: build
     if: ${{ !cancelled() && (github.event_name == 'push' || github.event.inputs.publish == 'true') }}
     runs-on: ubuntu-latest
-    environment: npm # NPM_TOKEN is an environment secret
+    environment: npm
+    permissions:
+      contents: write # GitHub release
+      id-token: write # npm trusted publishing (OIDC), no npm token needed
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
       - name: Install npm with staged publishing
         run: npm install -g npm@12
-      - name: Check npm token
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::NPM_TOKEN is not set. Add a granular \"Read and write (stage only)\" npm token as a secret of the npm environment."
-            exit 1
-          fi
-          npm whoami
       - uses: actions/download-artifact@v4
         with:
           path: dist/bin
@@ -104,12 +97,11 @@ jobs:
           files: dist/release/*
           generate_release_notes: true
       - name: Stage npm packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           node scripts/npm-package.mjs "${VERSION#v}" --require-all
-          # NPM_TOKEN is stage-only: versions land in the staged queue and a
-          # maintainer approves them with 2FA (npm stage list / npm stage approve).
+          # Authenticates through npm trusted publishing (each package trusts this
+          # workflow). Versions land in the staged queue and a maintainer approves
+          # them with 2FA (npm stage list / npm stage approve).
           # Skip versions already published or staged so a re-run can finish a partial run.
           failed=()
           for d in dist/npm/httpman-app-*/ dist/npm/httpman-app/; do
