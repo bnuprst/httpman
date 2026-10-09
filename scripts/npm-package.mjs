@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Assembles npm packages from built binaries.
 //
-//   node scripts/npm-package.mjs 1.2.3
+//   node scripts/npm-package.mjs 1.2.3 [--require-all]
 //
 // Reads dist/bin/<goos>-<goarch>/httpman[.exe] and writes publishable
 // package directories to dist/npm/:
@@ -12,9 +12,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const version = (process.argv[2] || '').replace(/^v/, '');
+const args = process.argv.slice(2);
+const requireAll = args.includes('--require-all');
+const version = (args.find((a) => !a.startsWith('--')) || '').replace(/^v/, '');
 if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
-  console.error('usage: node scripts/npm-package.mjs <semver>');
+  console.error('usage: node scripts/npm-package.mjs <semver> [--require-all]');
   process.exit(1);
 }
 
@@ -70,4 +72,10 @@ if (fs.existsSync(path.join(root, 'LICENSE'))) fs.copyFileSync(path.join(root, '
 
 const missing = Object.keys(main.optionalDependencies).filter((n) => !built.includes(n));
 console.log(`Packages in ${path.relative(root, outRoot)}: ${[...built, NAME].join(', ')}`);
-if (missing.length) console.warn(`warning: no binaries for ${missing.join(', ')}`);
+if (missing.length) {
+  if (requireAll) {
+    console.error(`error: no binaries for ${missing.join(', ')}`);
+    process.exit(1);
+  }
+  console.warn(`warning: no binaries for ${missing.join(', ')}`);
+}
