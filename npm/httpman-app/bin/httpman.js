@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Launcher for the native httpman binary, which is installed as a
-// platform-specific optional dependency (httpman-app-<platform>-<arch>).
+// platform-specific optional dependency (httpman-app-<platform>-<arch>,
+// with "windows" in place of "win32").
 'use strict';
 
 const { spawn, spawnSync } = require('child_process');
@@ -12,7 +13,8 @@ const exe = process.platform === 'win32' ? 'httpman.exe' : 'httpman';
 
 function findBinary() {
   if (process.env.HTTPMAN_BINARY) return process.env.HTTPMAN_BINARY;
-  const name = `${PKG}-${process.platform}-${process.arch}`;
+  const platform = process.platform === 'win32' ? 'windows' : process.platform;
+  const name = `${PKG}-${platform}-${process.arch}`;
   try {
     return require.resolve(`${name}/bin/${exe}`);
   } catch (e) {
