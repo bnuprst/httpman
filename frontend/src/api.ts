@@ -20,6 +20,7 @@ declare global {
       EventsOff(name: string): void;
       BrowserOpenURL(url: string): void;
       ClipboardSetText(text: string): Promise<boolean>;
+      ClipboardGetText(): Promise<string>;
       WindowSetTitle(title: string): void;
     };
   }
@@ -106,4 +107,13 @@ export async function copyText(text: string) {
     /* fall through */
   }
   await navigator.clipboard.writeText(text);
+}
+
+export async function readClipboardText(): Promise<string> {
+  try {
+    if (window.runtime) return await window.runtime.ClipboardGetText();
+  } catch {
+    /* fall through */
+  }
+  return navigator.clipboard.readText();
 }
