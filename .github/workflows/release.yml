@@ -111,6 +111,7 @@ jobs:
           # NPM_TOKEN is stage-only: versions land in the staged queue and a
           # maintainer approves them with 2FA (npm stage list / npm stage approve).
           # Skip versions already published or staged so a re-run can finish a partial run.
+          failed=()
           for d in dist/npm/httpman-app-*/ dist/npm/httpman-app/; do
             name="$(node -p "require('./$d/package.json').name")"
             version="$(node -p "require('./$d/package.json').version")"
@@ -120,6 +121,11 @@ jobs:
               process.exit(items.some((i) => i.version === process.env.V && i.status !== 'rejected') ? 0 : 1)"; then
               echo "skip $name@$version (already staged)"; continue
             fi
-            npm stage publish --access public "$d"
+            # Keep going on failure so one rejected package doesn't hide the state of the rest.
+            npm stage publish --access public "$d" || failed+=("$name@$version")
           done
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "::error::Failed to stage: ${failed[*]}"
+            exit 1
+          fi
           echo "::notice::Staged ${VERSION#v}. Approve each package with 2FA: npm stage list, then npm stage approve <id> (platform packages before httpman-app)."

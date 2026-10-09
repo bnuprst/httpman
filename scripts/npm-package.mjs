@@ -24,6 +24,9 @@ const mainSrc = path.join(root, 'npm', 'httpman-app');
 const mainPkg = JSON.parse(fs.readFileSync(path.join(mainSrc, 'package.json'), 'utf8'));
 const NAME = mainPkg.name;
 const OS = { windows: 'win32', darwin: 'darwin', linux: 'linux' };
+// Name suffix per GOOS. Windows packages are named "windows", not "win32":
+// npm's spam detection rejects new packages named *-win32-*.
+const NAME_OS = { windows: 'windows', darwin: 'darwin', linux: 'linux' };
 const ARCH = { amd64: 'x64', arm64: 'arm64' };
 
 const binRoot = path.join(root, 'dist', 'bin');
@@ -39,7 +42,7 @@ for (const dir of fs.existsSync(binRoot) ? fs.readdirSync(binRoot) : []) {
   const exe = goos === 'windows' ? 'httpman.exe' : 'httpman';
   const src = path.join(binRoot, dir, exe);
   if (!fs.existsSync(src)) continue;
-  const name = `${NAME}-${OS[goos]}-${ARCH[goarch]}`;
+  const name = `${NAME}-${NAME_OS[goos]}-${ARCH[goarch]}`;
   const dst = path.join(outRoot, name);
   fs.mkdirSync(path.join(dst, 'bin'), { recursive: true });
   fs.copyFileSync(src, path.join(dst, 'bin', exe));
