@@ -7,8 +7,12 @@ export default function ConsolePanel() {
   const set = useStore((s) => s.set);
   const [filter, setFilter] = useState('');
   const [level, setLevel] = useState('all');
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [entries.length]);
+  const body = useRef<HTMLDivElement>(null);
+  // Scroll only the console body: scrollIntoView would also scroll overflow:hidden
+  // ancestors (the app shell), leaving the window blank after the console closes.
+  useEffect(() => {
+    if (body.current) body.current.scrollTop = body.current.scrollHeight;
+  }, [entries.length]);
   const shown = entries.filter((e) => (level === 'all' || e.level === level || (level === 'log' && ['log', 'info', 'debug'].includes(e.level))) && (!filter || e.message.toLowerCase().includes(filter.toLowerCase())));
   return (
     <div className="console">
@@ -30,12 +34,11 @@ export default function ConsolePanel() {
           ×
         </button>
       </div>
-      <div className="console-body">
+      <div className="console-body" ref={body}>
         {shown.length === 0 && <div className="muted pad">Requests, console.log() output and script errors appear here.</div>}
         {shown.map((e, i) => (
           <Entry key={i} e={e} />
         ))}
-        <div ref={end} />
       </div>
     </div>
   );
