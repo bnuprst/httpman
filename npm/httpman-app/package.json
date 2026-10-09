@@ -1,0 +1,20 @@
+{
+  "name": "httpman-app",
+  "version": "0.0.0",
+  "description": "A local, offline HTTP client compatible with Postman collections — desktop app and newman-style CLI. No accounts, no sync.",
+  "keywords": ["http", "rest", "api", "postman", "newman", "collection", "client", "testing", "desktop"],
+  "license": "MIT",
+  "homepage": "https://github.com/bnuprst/httpman",
+  "repository": { "type": "git", "url": "git+https://github.com/bnuprst/httpman.git" },
+  "bin": { "httpman": "bin/httpman.js" },
+  "files": ["bin/httpman.js", "README.md"],
+  "engines": { "node": ">=16" },
+  "optionalDependencies": {
+    "httpman-app-win32-x64": "0.0.0",
+    "httpman-app-win32-arm64": "0.0.0",
+    "httpman-app-darwin-x64": "0.0.0",
+    "httpman-app-darwin-arm64": "0.0.0",
+    "httpman-app-linux-x64": "0.0.0",
+    "httpman-app-linux-arm64": "0.0.0"
+  }
+}
