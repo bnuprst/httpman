@@ -79,16 +79,16 @@ func Marshal(c *Collection) ([]byte, error) {
 // ---- v1 conversion ----
 
 type v1Collection struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	Description  string          `json:"description"`
-	Order        []string        `json:"order"`
-	FoldersOrder []string        `json:"folders_order"`
-	Folders      []v1Folder      `json:"folders"`
-	Requests     []v1Request     `json:"requests"`
-	Events       []Event         `json:"events"`
-	Variables    []Variable      `json:"variables"`
-	Auth         *Auth           `json:"auth"`
+	ID           string      `json:"id"`
+	Name         string      `json:"name"`
+	Description  string      `json:"description"`
+	Order        []string    `json:"order"`
+	FoldersOrder []string    `json:"folders_order"`
+	Folders      []v1Folder  `json:"folders"`
+	Requests     []v1Request `json:"requests"`
+	Events       []Event     `json:"events"`
+	Variables    []Variable  `json:"variables"`
+	Auth         *Auth       `json:"auth"`
 }
 
 type v1Folder struct {

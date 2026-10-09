@@ -109,11 +109,11 @@ type Event struct {
 
 // Script holds JavaScript source lines.
 type Script struct {
-	ID   string   `json:"id,omitempty"`
-	Type string   `json:"type,omitempty"`
-	Exec ExecLines `json:"exec"`
+	ID   string          `json:"id,omitempty"`
+	Type string          `json:"type,omitempty"`
+	Exec ExecLines       `json:"exec"`
 	Src  json.RawMessage `json:"src,omitempty"`
-	Name string   `json:"name,omitempty"`
+	Name string          `json:"name,omitempty"`
 }
 
 // ExecLines accepts either a string or an array of strings.
@@ -159,24 +159,24 @@ func ScriptFor(events []Event, listen string) string {
 
 // Variable is a collection/folder variable or a url path variable.
 type Variable struct {
-	ID          string          `json:"id,omitempty"`
-	Key         string          `json:"key"`
-	Value       any             `json:"value"`
-	Type        string          `json:"type,omitempty"`
-	Name        string          `json:"name,omitempty"`
-	Description Description     `json:"description,omitempty"`
-	Disabled    bool            `json:"disabled,omitempty"`
-	System      bool            `json:"system,omitempty"`
+	ID          string      `json:"id,omitempty"`
+	Key         string      `json:"key"`
+	Value       any         `json:"value"`
+	Type        string      `json:"type,omitempty"`
+	Name        string      `json:"name,omitempty"`
+	Description Description `json:"description,omitempty"`
+	Disabled    bool        `json:"disabled,omitempty"`
+	System      bool        `json:"system,omitempty"`
 }
 
 // Request describes an HTTP request.
 type Request struct {
-	URL         URL         `json:"url"`
-	Auth        *Auth       `json:"auth,omitempty"`
-	Method      string      `json:"method"`
-	Description Description `json:"description,omitempty"`
-	Header      Headers     `json:"header"`
-	Body        *Body       `json:"body,omitempty"`
+	URL         URL             `json:"url"`
+	Auth        *Auth           `json:"auth,omitempty"`
+	Method      string          `json:"method"`
+	Description Description     `json:"description,omitempty"`
+	Header      Headers         `json:"header"`
+	Body        *Body           `json:"body,omitempty"`
 	Proxy       json.RawMessage `json:"proxy,omitempty"`
 	Certificate json.RawMessage `json:"certificate,omitempty"`
 }

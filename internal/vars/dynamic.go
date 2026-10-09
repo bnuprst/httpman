@@ -50,11 +50,11 @@ func randomDate(offsetDays int) string {
 }
 
 var dynamic = map[string]func() string{
-	"$guid":        uuid.NewString,
-	"$randomUUID":  uuid.NewString,
-	"$timestamp":   func() string { return strconv.FormatInt(time.Now().Unix(), 10) },
+	"$guid":         uuid.NewString,
+	"$randomUUID":   uuid.NewString,
+	"$timestamp":    func() string { return strconv.FormatInt(time.Now().Unix(), 10) },
 	"$isoTimestamp": func() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") },
-	"$randomInt":   func() string { return strconv.Itoa(rand.IntN(1001)) },
+	"$randomInt":    func() string { return strconv.Itoa(rand.IntN(1001)) },
 	"$randomBoolean": func() string {
 		return strconv.FormatBool(rand.IntN(2) == 1)
 	},

@@ -68,13 +68,13 @@ type Scopes struct {
 
 // ResponseData is the response exposed as pm.response.
 type ResponseData struct {
-	Code         int             `json:"code"`
-	Status       string          `json:"status"`
-	Header       any             `json:"header"`
-	Body         string          `json:"body"`
-	ResponseTime float64         `json:"responseTime"`
-	ResponseSize int64           `json:"responseSize"`
-	Cookies      any             `json:"cookies,omitempty"`
+	Code         int     `json:"code"`
+	Status       string  `json:"status"`
+	Header       any     `json:"header"`
+	Body         string  `json:"body"`
+	ResponseTime float64 `json:"responseTime"`
+	ResponseSize int64   `json:"responseSize"`
+	Cookies      any     `json:"cookies,omitempty"`
 }
 
 // Input is everything a script execution needs.

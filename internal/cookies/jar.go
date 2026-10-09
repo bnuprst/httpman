@@ -37,8 +37,8 @@ func (c *Cookie) key() string { return c.Domain + ";" + c.Path + ";" + c.Name }
 
 // Jar is a thread-safe RFC 6265-ish cookie jar.
 type Jar struct {
-	mu      sync.Mutex
-	cookies map[string]*Cookie
+	mu       sync.Mutex
+	cookies  map[string]*Cookie
 	OnChange func()
 }
 
