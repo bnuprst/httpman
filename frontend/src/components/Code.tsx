@@ -99,7 +99,10 @@ async function transform(view: EditorView, codec: Codec) {
   try {
     const out = await applyCodec(codec, input);
     if (view.state.sliceDoc(from, to) !== input) return;
-    view.dispatch({ changes: { from, to, insert: out }, selection: { anchor: from, head: from + out.length }, userEvent: 'input.codec' });
+    // Measure the inserted text after CodeMirror's line-break normalisation:
+    // decoded output often has \r\n, which shrinks to one char per break.
+    const insert = view.state.toText(out);
+    view.dispatch({ changes: { from, to, insert }, selection: { anchor: from, head: from + insert.length }, userEvent: 'input.codec' });
     view.focus();
   } catch (e) {
     useStore.getState().toast((e as Error).message, 'error');
