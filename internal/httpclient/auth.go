@@ -52,20 +52,14 @@ func applyAuth(a *collection.Auth, method string, u *url.URL, h http.Header, bod
 			h.Set(key, val)
 		}
 	case "oauth2":
-		// Matches postman-runtime: MAC tokens are not applied, and an
-		// explicitly empty header prefix sends the bare token.
-		tok := a.Get("accessToken")
-		if tok == "" || strings.EqualFold(a.Get("tokenType"), "mac") {
+		v, inQuery, ok := a.OAuth2Credential()
+		if !ok {
 			break
 		}
-		if a.Get("addTokenTo") == "queryParams" {
-			addQuery(u, "access_token", tok)
+		if inQuery {
+			addQuery(u, "access_token", v)
 		} else if h.Get("Authorization") == "" {
-			prefix := a.Get("headerPrefix")
-			if prefix == "" && !a.Has("headerPrefix") {
-				prefix = "Bearer"
-			}
-			h.Set("Authorization", strings.TrimSpace(prefix+" "+tok))
+			h.Set("Authorization", v)
 		}
 	case "digest":
 		st.digest = &digestAuth{username: a.Get("username"), password: a.Get("password")}

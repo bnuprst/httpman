@@ -1,4 +1,4 @@
-import { CollectionTab, useStore } from '../store';
+import { CollectionTab, collectionForToken, useStore } from '../store';
 import type { Auth, Item, KV, Variable } from '../types';
 import { descriptionText, findItem, getScript, setScript, varValueString } from '../util';
 import AuthEditor from './AuthEditor';
@@ -50,9 +50,6 @@ export default function CollectionEditor({ tab }: { tab: CollectionTab }) {
         return v;
       }),
     });
-  // Collection variables as currently edited, so unsaved secrets can be used
-  // to get an OAuth 2.0 token.
-  const tokenCollection = () => (coll ? (isFolder ? coll : { ...coll, variable: d.variable }) : null);
 
   return (
     <div className="editor-page">
@@ -95,7 +92,7 @@ export default function CollectionEditor({ tab }: { tab: CollectionTab }) {
               allowInherit={isFolder}
               inheritedFrom={inherited}
               collectionId={tab.collectionId}
-              tokenCollection={tokenCollection}
+              tokenCollection={() => collectionForToken(tab.collectionId)}
               onChange={(a: Auth | null) => set({ auth: a ?? undefined })}
             />
           </div>

@@ -1,8 +1,11 @@
 package codegen
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/bnuprst/httpman/internal/collection"
 )
 
 func TestParseCurl(t *testing.T) {
@@ -53,5 +56,31 @@ func TestGenerate(t *testing.T) {
 	back, err := ParseCurl(out)
 	if err != nil || back.Body.Raw != `{"a":1}` || back.Method != "POST" {
 		t.Errorf("round trip: %v %+v\n%s", err, back, out)
+	}
+}
+
+func TestOAuth2SnippetMatchesSend(t *testing.T) {
+	gen := func(params string) string {
+		var a collection.Auth
+		if err := json.Unmarshal([]byte(`{"type":"oauth2","oauth2":`+params+`}`), &a); err != nil {
+			t.Fatal(err)
+		}
+		out, err := Generate(&Snippet{Method: "GET", URL: "https://x/y", Auth: &a}, "curl")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if s := gen(`[{"key":"accessToken","value":"t"},{"key":"headerPrefix","value":null}]`); !strings.Contains(s, "Authorization: Bearer t") {
+		t.Errorf("null prefix:\n%s", s)
+	}
+	if s := gen(`[{"key":"accessToken","value":"t"},{"key":"headerPrefix","value":""}]`); !strings.Contains(s, "Authorization: t'") {
+		t.Errorf("empty prefix:\n%s", s)
+	}
+	if s := gen(`[{"key":"accessToken","value":"t"},{"key":"tokenType","value":"mac"}]`); strings.Contains(s, "Authorization") {
+		t.Errorf("mac token:\n%s", s)
+	}
+	if s := gen(`[{"key":"accessToken","value":"t"},{"key":"addTokenTo","value":"queryParams"}]`); strings.Contains(s, "Authorization") || !strings.Contains(s, "https://x/y?access_token=t") {
+		t.Errorf("query token:\n%s", s)
 	}
 }

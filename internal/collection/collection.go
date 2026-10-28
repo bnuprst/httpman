@@ -629,17 +629,26 @@ func (a *Auth) Get(key string) string {
 	return ""
 }
 
-// Has reports whether the active type has a parameter with the given key.
-func (a *Auth) Has(key string) bool {
-	if a == nil {
-		return false
+// OAuth2Credential returns how an OAuth 2.0 access token is sent, following
+// postman-runtime: nothing for an empty token or a MAC token; the bare token
+// with inQuery for addTokenTo=queryParams; otherwise the Authorization header
+// value. A missing or null headerPrefix means "Bearer", while an explicitly
+// empty one sends the token without a prefix.
+func (a *Auth) OAuth2Credential() (value string, inQuery, ok bool) {
+	tok := a.Get("accessToken")
+	if tok == "" || strings.EqualFold(a.Get("tokenType"), "mac") {
+		return "", false, false
 	}
+	if a.Get("addTokenTo") == "queryParams" {
+		return tok, true, true
+	}
+	prefix := "Bearer"
 	for _, p := range a.Params[a.Type] {
-		if p.Key == key {
-			return true
+		if p.Key == "headerPrefix" && p.Value != nil {
+			prefix = strings.TrimSpace(ValueString(p.Value))
 		}
 	}
-	return false
+	return strings.TrimSpace(prefix + " " + tok), false, true
 }
 
 // ValueString converts a JSON value into the string Postman would use.

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -148,19 +149,32 @@ func browser(t *testing.T) OAuth2Authorizer {
 			t.Fatalf("listen %s: %v", redirectURI, err)
 		}
 		defer l.Close()
-		resp, err := http.Get(authURL)
-		if err != nil {
-			return "", err
-		}
-		resp.Body.Close()
-		if frag := resp.Request.URL.Fragment; frag != "" {
-			u := *resp.Request.URL
-			u.Fragment, u.RawQuery = "", frag
-			r2, err := http.Get(u.String())
+		var get func(u string) error
+		get = func(u string) error {
+			resp, err := http.Get(u)
 			if err != nil {
-				return "", err
+				return err
 			}
-			r2.Body.Close()
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil || !strings.Contains(string(body), "close this window") {
+				t.Errorf("callback page not delivered: %q %v", body, err)
+			}
+			// Run the page script: move the fragment into the query.
+			if frag := resp.Request.URL.Fragment; frag != "" {
+				next := *resp.Request.URL
+				next.Fragment = ""
+				if next.RawQuery != "" {
+					next.RawQuery += "&" + frag
+				} else {
+					next.RawQuery = frag
+				}
+				return get(next.String())
+			}
+			return nil
+		}
+		if err := get(authURL); err != nil {
+			return "", err
 		}
 		return <-l.C, nil
 	}
@@ -240,6 +254,9 @@ func TestOAuth2ApplyMatchesPostman(t *testing.T) {
 	if h, _ := apply(`[{"key":"accessToken","value":"t"}]`); h.Get("Authorization") != "Bearer t" {
 		t.Errorf("default: %q", h.Get("Authorization"))
 	}
+	if h, _ := apply(`[{"key":"accessToken","value":"t"},{"key":"headerPrefix","value":null}]`); h.Get("Authorization") != "Bearer t" {
+		t.Errorf("null prefix: %q", h.Get("Authorization"))
+	}
 	if h, _ := apply(`[{"key":"accessToken","value":"t"},{"key":"headerPrefix","value":""}]`); h.Get("Authorization") != "t" {
 		t.Errorf("empty prefix: %q", h.Get("Authorization"))
 	}
@@ -248,5 +265,29 @@ func TestOAuth2ApplyMatchesPostman(t *testing.T) {
 	}
 	if _, u := apply(`[{"key":"accessToken","value":"t"},{"key":"addTokenTo","value":"queryParams"}]`); u.Query().Get("access_token") != "t" {
 		t.Errorf("query: %s", u)
+	}
+}
+
+func TestOAuth2LoopbackCallback(t *testing.T) {
+	// The callback URL has its own query, no state is configured (one is
+	// generated and checked), and a stray hit must not complete the flow.
+	redirect := fmt.Sprintf("http://localhost:%d/cb?app=1", freePort(t))
+	var sentState string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sentState = r.URL.Query().Get("state")
+		if resp, err := http.Get(strings.Replace(redirect, "app=1", "app=1&stray=1", 1)); err == nil {
+			resp.Body.Close()
+		}
+		http.Redirect(w, r, redirect+"#access_token=imp&state="+sentState, http.StatusFound)
+	}))
+	defer srv.Close()
+	a := oauth2Auth(t, `[{"key":"grant_type","value":"implicit"},{"key":"authUrl","value":"`+srv.URL+`"},
+		{"key":"redirect_uri","value":"`+redirect+`"},{"key":"clientId","value":"id"}]`)
+	tok, err := New(DefaultOptions()).FetchOAuth2Token(context.Background(), a, "", browser(t))
+	if err != nil || tok.AccessToken != "imp" {
+		t.Fatalf("token: %+v %v", tok, err)
+	}
+	if len(sentState) != 32 {
+		t.Errorf("generated state: %q", sentState)
 	}
 }

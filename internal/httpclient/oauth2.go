@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bnuprst/httpman/internal/collection"
 )
@@ -102,10 +103,13 @@ func (c *Client) oauth2Interactive(ctx context.Context, a *collection.Auth, gran
 	if s := a.Get("scope"); s != "" {
 		q.Set("scope", s)
 	}
+	// A state is always sent and checked, so a stray request to the callback
+	// cannot inject a code; the generated one is not stored in the auth.
 	state := a.Get("state")
-	if state != "" {
-		q.Set("state", state)
+	if state == "" {
+		state = randomHex(16)
 	}
+	q.Set("state", state)
 	verifier := ""
 	if grant == "authorization_code_with_pkce" {
 		verifier = a.Get("code_verifier")
@@ -137,7 +141,7 @@ func (c *Client) oauth2Interactive(ctx context.Context, a *collection.Auth, gran
 	if e := params.Get("error"); e != "" {
 		return nil, oauth2Error(e, params.Get("error_description"))
 	}
-	if state != "" && params.Get("state") != state {
+	if params.Get("state") != state {
 		return nil, errors.New("state returned by the authorization server does not match")
 	}
 	if grant == "implicit" {
@@ -305,13 +309,21 @@ type RedirectListener struct {
 	srv *http.Server
 }
 
-// Close stops the listener.
-func (l *RedirectListener) Close() { _ = l.srv.Close() }
+// Close stops the listener, letting the page already being served finish.
+func (l *RedirectListener) Close() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if l.srv.Shutdown(ctx) != nil {
+		_ = l.srv.Close()
+	}
+}
 
+// The script moves an implicit grant's fragment into the query (keeping any
+// query the callback URL already has) so that it reaches the listener.
 const redirectPage = `<!doctype html><meta charset="utf-8"><title>httpman</title>
 <body style="font-family:system-ui,sans-serif;padding:2em">
 <p id="m">You can close this window and return to httpman.</p>
-<script>if(location.hash.length>1&&!location.search){location.replace(location.pathname+"?"+location.hash.slice(1))}</script>`
+<script>if(location.hash.length>1){var h=location.hash.slice(1);location.replace(location.pathname+(location.search?location.search+"&":"?")+h)}</script>`
 
 // ListenRedirect starts a listener for redirectURI when it points to this
 // machine over plain http (http://localhost:port/path or 127.0.0.1). It
@@ -322,16 +334,32 @@ func ListenRedirect(redirectURI string) (*RedirectListener, error) {
 		return nil, nil
 	}
 	host := u.Hostname()
-	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+	var hosts []string
+	switch host {
+	case "localhost":
+		// Browsers may connect to either address family.
+		hosts = []string{"127.0.0.1", "::1"}
+	case "127.0.0.1", "::1":
+		hosts = []string{host}
+	default:
 		return nil, nil
 	}
 	port := u.Port()
 	if port == "" {
 		port = "80"
 	}
-	ln, err := net.Listen("tcp", net.JoinHostPort(host, port))
-	if err != nil {
-		return nil, fmt.Errorf("cannot listen for the OAuth 2.0 callback on %s: %w", u.Host, err)
+	var lns []net.Listener
+	var lerr error
+	for _, h := range hosts {
+		ln, err := net.Listen("tcp", net.JoinHostPort(h, port))
+		if err != nil {
+			lerr = err
+			continue
+		}
+		lns = append(lns, ln)
+	}
+	if len(lns) == 0 {
+		return nil, fmt.Errorf("cannot listen for the OAuth 2.0 callback on %s: %w", u.Host, lerr)
 	}
 	path := u.Path
 	if path == "" {
@@ -347,9 +375,11 @@ func ListenRedirect(redirectURI string) (*RedirectListener, error) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(redirectPage))
-		// Implicit grants carry the token in the fragment, which the page
-		// script turns into a query; wait for that second request.
-		if r.URL.RawQuery == "" {
+		// Only an authorization response completes the flow. The first hit of
+		// an implicit grant has its token in the fragment; the page script
+		// sends it again as a query.
+		q := r.URL.Query()
+		if !q.Has("code") && !q.Has("access_token") && !q.Has("error") {
 			return
 		}
 		got := *u
@@ -359,6 +389,8 @@ func ListenRedirect(redirectURI string) (*RedirectListener, error) {
 		default:
 		}
 	})}
-	go func() { _ = l.srv.Serve(ln) }()
+	for _, ln := range lns {
+		go func(ln net.Listener) { _ = l.srv.Serve(ln) }(ln)
+	}
 	return l, nil
 }

@@ -266,6 +266,13 @@ export function authParamValue(auth: Auth | null | undefined, key: string): unkn
   return Array.isArray(list) ? list.find((x) => x.key === key)?.value : undefined;
 }
 
+/** Removes an auth parameter of the active type. */
+export function removeAuthParam(auth: Auth, key: string): Auth {
+  const raw = auth[auth.type];
+  if (!Array.isArray(raw)) return auth;
+  return { ...auth, [auth.type]: raw.filter((p) => p.key !== key) };
+}
+
 /** Sets an auth parameter in place, keeping the order and fields of the others. */
 export function setAuthParam(auth: Auth, key: string, value: unknown): Auth {
   const type = auth.type;

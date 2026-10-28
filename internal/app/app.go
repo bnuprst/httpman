@@ -51,15 +51,39 @@ type App struct {
 	settings workspace.Settings
 	client   *httpclient.Client
 	jar      *cookies.Jar
-	cancels  map[string]context.CancelFunc
+	pending  map[string]*pendingOp // in-flight sends, runs and token requests
 	saveJar  *time.Timer
-	// oauthPaste receives redirect URLs pasted in the UI, by request ID.
-	oauthPaste map[string]chan string
+}
+
+// pendingOp is an in-flight operation the UI can cancel by its ID.
+type pendingOp struct {
+	cancel context.CancelFunc
+	paste  chan string // OAuth 2.0: redirect URLs pasted in the UI
+}
+
+// track registers an operation under id (if not empty). The returned func
+// cancels its context and unregisters it, unless another operation has
+// taken over the same id since.
+func (a *App) track(id string, cancel context.CancelFunc, paste chan string) (untrack func()) {
+	op := &pendingOp{cancel: cancel, paste: paste}
+	if id != "" {
+		a.mu.Lock()
+		a.pending[id] = op
+		a.mu.Unlock()
+	}
+	return func() {
+		cancel()
+		a.mu.Lock()
+		if a.pending[id] == op {
+			delete(a.pending, id)
+		}
+		a.mu.Unlock()
+	}
 }
 
 // New creates the app backend.
 func New(ws *workspace.Workspace, version string) *App {
-	a := &App{ws: ws, version: version, cancels: map[string]context.CancelFunc{}, oauthPaste: map[string]chan string{}, jar: cookies.New()}
+	a := &App{ws: ws, version: version, pending: map[string]*pendingOp{}, jar: cookies.New()}
 	a.settings = ws.Settings()
 	if a.settings.SaveCookies {
 		_ = a.jar.Load(ws.CookiesPath())
@@ -580,17 +604,7 @@ func (a *App) Send(in SendInput) (*SendResult, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if in.RequestID != "" {
-		a.mu.Lock()
-		a.cancels[in.RequestID] = cancel
-		a.mu.Unlock()
-	}
-	defer func() {
-		cancel()
-		a.mu.Lock()
-		delete(a.cancels, in.RequestID)
-		a.mu.Unlock()
-	}()
+	defer a.track(in.RequestID, cancel, nil)()
 	ex := sess.Execute(ctx, item, parents, runner.IterationInfo{})
 	if ctx.Err() != nil && ex.Error != "" {
 		ex.Error = "Request cancelled"
@@ -643,10 +657,10 @@ func mustJSON(v any) json.RawMessage {
 // Cancel aborts an in-flight request or run.
 func (a *App) Cancel(requestID string) {
 	a.mu.Lock()
-	cancel := a.cancels[requestID]
+	op := a.pending[requestID]
 	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if op != nil {
+		op.cancel()
 	}
 }
 
@@ -682,19 +696,7 @@ func (a *App) GetOAuth2Token(in OAuth2Input) (*httpclient.OAuth2Token, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	pasted := make(chan string, 1)
-	a.mu.Lock()
-	if in.RequestID != "" {
-		a.cancels[in.RequestID] = cancel
-		a.oauthPaste[in.RequestID] = pasted
-	}
-	a.mu.Unlock()
-	defer func() {
-		cancel()
-		a.mu.Lock()
-		delete(a.cancels, in.RequestID)
-		delete(a.oauthPaste, in.RequestID)
-		a.mu.Unlock()
-	}()
+	defer a.track(in.RequestID, cancel, pasted)()
 
 	authorize := func(ctx context.Context, authURL, redirectURI string) (string, error) {
 		l, err := httpclient.ListenRedirect(redirectURI)
@@ -731,13 +733,13 @@ func (a *App) GetOAuth2Token(in OAuth2Input) (*httpclient.OAuth2Token, error) {
 // browser to a pending GetOAuth2Token call.
 func (a *App) SubmitOAuth2Callback(requestID, redirectURL string) error {
 	a.mu.Lock()
-	ch := a.oauthPaste[requestID]
+	op := a.pending[requestID]
 	a.mu.Unlock()
-	if ch == nil {
+	if op == nil || op.paste == nil {
 		return errors.New("no authorization is in progress")
 	}
 	select {
-	case ch <- redirectURL:
+	case op.paste <- redirectURL:
 	default:
 	}
 	return nil
@@ -815,16 +817,9 @@ func (a *App) StartRun(in RunInput) (string, error) {
 	sess.Console = func(e runner.ConsoleEntry) { a.emit("console", e) }
 
 	ctx, cancel := context.WithCancel(context.Background())
-	a.mu.Lock()
-	a.cancels[in.RunID] = cancel
-	a.mu.Unlock()
+	untrack := a.track(in.RunID, cancel, nil)
 	go func() {
-		defer func() {
-			cancel()
-			a.mu.Lock()
-			delete(a.cancels, in.RunID)
-			a.mu.Unlock()
-		}()
+		defer untrack()
 		sum, err := sess.Run(ctx, runner.RunOptions{FolderID: in.FolderID, Iterations: in.Iterations, Data: data, Delay: time.Duration(in.DelayMs) * time.Millisecond, Bail: in.Bail, Only: in.Only}, func(ev runner.RunEvent) {
 			if ev.Type == "done" {
 				return // emitted below, after variables are persisted

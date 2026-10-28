@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, onEvent, openExternal } from '../api';
 import { useStore } from '../store';
 import type { Auth, Collection } from '../types';
-import { authParam, authParamValue, setAuthParam, uuid } from '../util';
+import { authParam, authParamValue, removeAuthParam, setAuthParam, uuid } from '../util';
 import VarInput from './VarInput';
 
 type Field = {
@@ -182,7 +182,11 @@ export default function AuthEditor({ auth, onChange, allowInherit, inheritedFrom
         {def?.fields.map((f) => {
           if (f.showFor && !f.showFor.includes(authParam(auth, 'grant_type') || AC)) return null;
           const v = authParam(auth, f.key);
-          const set = (val: unknown) => onChange(setAuthParam(auth as Auth, f.key, val));
+          // Postman: a missing or null headerPrefix means "Bearer", an empty
+          // one means no prefix. Clearing the field restores the default.
+          const set = (val: unknown) =>
+            onChange(f.key === 'headerPrefix' && val === '' ? removeAuthParam(auth as Auth, f.key) : setAuthParam(auth as Auth, f.key, val));
+          const placeholder = f.key === 'headerPrefix' && v === '' && authParamValue(auth, f.key) === '' ? 'none (token sent without prefix)' : f.placeholder || f.label;
           return (
             <div key={f.key}>
               {f.section && <div className="section-title auth-section">{f.section}</div>}
@@ -199,7 +203,7 @@ export default function AuthEditor({ auth, onChange, allowInherit, inheritedFrom
                 ) : f.type === 'checkbox' ? (
                   <input type="checkbox" checked={(v || f.def) === 'true'} onChange={(e) => set(e.target.checked)} />
                 ) : (
-                  <VarInput value={v} type={f.type === 'password' ? 'password' : undefined} placeholder={f.placeholder || f.label} collectionId={collectionId} onChange={set} />
+                  <VarInput value={v} type={f.type === 'password' ? 'password' : undefined} placeholder={placeholder} collectionId={collectionId} onChange={set} />
                 )}
               </div>
             </div>
@@ -293,20 +297,25 @@ function OAuth2Token({ auth, onChange, tokenCollection }: { auth: Auth; onChange
   const latest = useRef(auth);
   latest.current = auth;
 
-  useEffect(() => {
-    if (!busy) return;
-    return onEvent('oauth2:authorize', (d: { requestId: string; url: string; captured: boolean }) => {
-      if (d.requestId !== busy) return;
-      setWaiting({ url: d.url, captured: d.captured });
-      openExternal(d.url);
-    });
-  }, [busy]);
+  // Subscribed for the component's lifetime and matched by ref, so an event
+  // emitted before React re-renders with the new request id is not missed.
+  const pendingId = useRef<string | null>(null);
+  useEffect(
+    () =>
+      onEvent('oauth2:authorize', (d: { requestId: string; url: string; captured: boolean }) => {
+        if (d.requestId !== pendingId.current) return;
+        setWaiting({ url: d.url, captured: d.captured });
+        openExternal(d.url);
+      }),
+    [],
+  );
 
   const current = authParam(auth, 'accessToken');
   const refreshToken = current ? refreshTokens.get(current) : undefined;
 
   const run = async (refresh: boolean) => {
     const requestId = uuid();
+    pendingId.current = requestId;
     setBusy(requestId);
     setStatus({ text: refresh ? 'Refreshing token…' : 'Requesting token…' });
     setWaiting(null);
@@ -328,6 +337,7 @@ function OAuth2Token({ auth, onChange, tokenCollection }: { auth: Auth; onChange
     } catch (e) {
       setStatus({ error: true, text: e instanceof Error ? e.message : String(e) });
     } finally {
+      pendingId.current = null;
       setBusy(null);
       setWaiting(null);
     }

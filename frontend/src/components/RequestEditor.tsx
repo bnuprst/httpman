@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef } from 'react';
-import { RequestTab, useStore } from '../store';
+import { RequestTab, collectionForToken, useStore } from '../store';
 import type { Auth, Item, KV, QueryParam, Request } from '../types';
 import { findItem, getScript, METHODS, methodClass, parseUrl, setScript, withQuery } from '../util';
 import AuthEditor from './AuthEditor';
@@ -171,7 +171,7 @@ export default function RequestEditor({ tab }: { tab: RequestTab }) {
             )}
             {pane === 'auth' && (
               <div className="scroll">
-                <AuthEditor auth={req.auth} allowInherit inheritedFrom={inherited} collectionId={tab.collectionId} tokenCollection={() => coll ?? null} onChange={(a: Auth | null) => setReq({ auth: a ?? undefined })} />
+                <AuthEditor auth={req.auth} allowInherit inheritedFrom={inherited} collectionId={tab.collectionId} tokenCollection={() => collectionForToken(tab.collectionId)} onChange={(a: Auth | null) => setReq({ auth: a ?? undefined })} />
               </div>
             )}
             {pane === 'headers' && (
