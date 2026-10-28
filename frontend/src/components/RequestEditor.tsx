@@ -171,7 +171,7 @@ export default function RequestEditor({ tab }: { tab: RequestTab }) {
             )}
             {pane === 'auth' && (
               <div className="scroll">
-                <AuthEditor auth={req.auth} allowInherit inheritedFrom={inherited} collectionId={tab.collectionId} onChange={(a: Auth | null) => setReq({ auth: a ?? undefined })} />
+                <AuthEditor auth={req.auth} allowInherit inheritedFrom={inherited} collectionId={tab.collectionId} tokenCollection={() => coll ?? null} onChange={(a: Auth | null) => setReq({ auth: a ?? undefined })} />
               </div>
             )}
             {pane === 'headers' && (

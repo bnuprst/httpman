@@ -629,6 +629,19 @@ func (a *Auth) Get(key string) string {
 	return ""
 }
 
+// Has reports whether the active type has a parameter with the given key.
+func (a *Auth) Has(key string) bool {
+	if a == nil {
+		return false
+	}
+	for _, p := range a.Params[a.Type] {
+		if p.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
 // ValueString converts a JSON value into the string Postman would use.
 func ValueString(v any) string {
 	switch t := v.(type) {

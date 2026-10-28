@@ -259,13 +259,21 @@ export function authParam(auth: Auth | null | undefined, key: string): string {
   return typeof p.value === 'string' ? p.value : String(p.value);
 }
 
-export function setAuthParam(auth: Auth, key: string, value: string): Auth {
+/** The raw value of an auth parameter (e.g. a list or a boolean). */
+export function authParamValue(auth: Auth | null | undefined, key: string): unknown {
+  if (!auth || !auth.type) return undefined;
+  const list = auth[auth.type];
+  return Array.isArray(list) ? list.find((x) => x.key === key)?.value : undefined;
+}
+
+/** Sets an auth parameter in place, keeping the order and fields of the others. */
+export function setAuthParam(auth: Auth, key: string, value: unknown): Auth {
   const type = auth.type;
   const raw = auth[type];
   const list: AuthParam[] = Array.isArray(raw) ? [...raw] : [];
   const idx = list.findIndex((p) => p.key === key);
   if (idx >= 0) list[idx] = { ...list[idx], value };
-  else list.push({ key, value, type: 'string' });
+  else list.push({ key, value, type: typeof value === 'boolean' ? 'boolean' : typeof value === 'string' ? 'string' : 'any' });
   return { ...auth, [type]: list };
 }
 

@@ -52,15 +52,17 @@ func applyAuth(a *collection.Auth, method string, u *url.URL, h http.Header, bod
 			h.Set(key, val)
 		}
 	case "oauth2":
+		// Matches postman-runtime: MAC tokens are not applied, and an
+		// explicitly empty header prefix sends the bare token.
 		tok := a.Get("accessToken")
-		if tok == "" {
+		if tok == "" || strings.EqualFold(a.Get("tokenType"), "mac") {
 			break
 		}
 		if a.Get("addTokenTo") == "queryParams" {
 			addQuery(u, "access_token", tok)
 		} else if h.Get("Authorization") == "" {
 			prefix := a.Get("headerPrefix")
-			if prefix == "" {
+			if prefix == "" && !a.Has("headerPrefix") {
 				prefix = "Bearer"
 			}
 			h.Set("Authorization", strings.TrimSpace(prefix+" "+tok))

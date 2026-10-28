@@ -53,11 +53,13 @@ type App struct {
 	jar      *cookies.Jar
 	cancels  map[string]context.CancelFunc
 	saveJar  *time.Timer
+	// oauthPaste receives redirect URLs pasted in the UI, by request ID.
+	oauthPaste map[string]chan string
 }
 
 // New creates the app backend.
 func New(ws *workspace.Workspace, version string) *App {
-	a := &App{ws: ws, version: version, cancels: map[string]context.CancelFunc{}, jar: cookies.New()}
+	a := &App{ws: ws, version: version, cancels: map[string]context.CancelFunc{}, oauthPaste: map[string]chan string{}, jar: cookies.New()}
 	a.settings = ws.Settings()
 	if a.settings.SaveCookies {
 		_ = a.jar.Load(ws.CookiesPath())
@@ -646,6 +648,99 @@ func (a *App) Cancel(requestID string) {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// ---- OAuth 2.0 ----
+
+// OAuth2Input asks for a new OAuth 2.0 token for the auth being edited.
+type OAuth2Input struct {
+	RequestID     string          `json:"requestId"`  // used for cancellation and pasted redirects
+	Collection    json.RawMessage `json:"collection"` // for collection variables (optional)
+	Auth          json.RawMessage `json:"auth"`       // the oauth2 auth, with {{variables}}
+	EnvironmentID string          `json:"environmentId"`
+	RefreshToken  string          `json:"refreshToken"` // set to refresh instead of starting a new grant
+}
+
+// oauth2Timeout bounds how long a browser authorization may take.
+var oauth2Timeout = 5 * time.Minute
+
+// GetOAuth2Token runs the token request configured by a Postman OAuth 2.0
+// auth, resolving {{variables}} (including collection variables) first. For
+// browser-based grants it emits "oauth2:authorize" with the URL to open; the
+// redirect is captured on loopback redirect URIs or pasted through
+// SubmitOAuth2Callback.
+func (a *App) GetOAuth2Token(in OAuth2Input) (*httpclient.OAuth2Token, error) {
+	item, err := json.Marshal(map[string]any{"request": map[string]any{"method": "GET", "url": "", "auth": in.Auth}})
+	if err != nil {
+		return nil, err
+	}
+	sess, it, _, _, _, err := a.prepare(SendInput{Collection: in.Collection, Item: item, EnvironmentID: in.EnvironmentID})
+	if err != nil {
+		return nil, err
+	}
+	auth := runner.Resolve(it.Request, sess.Resolver(nil)).Auth
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pasted := make(chan string, 1)
+	a.mu.Lock()
+	if in.RequestID != "" {
+		a.cancels[in.RequestID] = cancel
+		a.oauthPaste[in.RequestID] = pasted
+	}
+	a.mu.Unlock()
+	defer func() {
+		cancel()
+		a.mu.Lock()
+		delete(a.cancels, in.RequestID)
+		delete(a.oauthPaste, in.RequestID)
+		a.mu.Unlock()
+	}()
+
+	authorize := func(ctx context.Context, authURL, redirectURI string) (string, error) {
+		l, err := httpclient.ListenRedirect(redirectURI)
+		if err != nil {
+			return "", err
+		}
+		var captured <-chan string
+		if l != nil {
+			defer l.Close()
+			captured = l.C
+		}
+		a.emit("oauth2:authorize", map[string]any{"requestId": in.RequestID, "url": authURL, "redirectUri": redirectURI, "captured": l != nil})
+		timer := time.NewTimer(oauth2Timeout)
+		defer timer.Stop()
+		select {
+		case u := <-captured:
+			return u, nil
+		case u := <-pasted:
+			return u, nil
+		case <-timer.C:
+			return "", errors.New("timed out waiting for the authorization redirect")
+		case <-ctx.Done():
+			return "", errors.New("cancelled")
+		}
+	}
+	tok, err := sess.Client.FetchOAuth2Token(ctx, auth, in.RefreshToken, authorize)
+	if err != nil && ctx.Err() != nil {
+		return nil, errors.New("cancelled")
+	}
+	return tok, err
+}
+
+// SubmitOAuth2Callback hands the redirect URL the user copied from the
+// browser to a pending GetOAuth2Token call.
+func (a *App) SubmitOAuth2Callback(requestID, redirectURL string) error {
+	a.mu.Lock()
+	ch := a.oauthPaste[requestID]
+	a.mu.Unlock()
+	if ch == nil {
+		return errors.New("no authorization is in progress")
+	}
+	select {
+	case ch <- redirectURL:
+	default:
+	}
+	return nil
 }
 
 // ResolveRequest substitutes variables (no scripts) for code generation.

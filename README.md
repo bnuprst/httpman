@@ -22,7 +22,8 @@ Windows is the primary platform. macOS and Linux are supported too.
 **Requests**
 - All methods. Query/path params are synced with the URL. `{{variables}}` are highlighted, and you can hover to see the resolved value.
 - Bodies: raw (JSON/XML/HTML/JS/text), form-data with files, x-www-form-urlencoded, binary file, GraphQL.
-- Auth: Basic, Bearer, API Key, Digest, OAuth 1.0, OAuth 2.0 (token), Hawk, AWS Signature v4. Auth is inherited from folders and collections.
+- Auth: Basic, Bearer, API Key, Digest, OAuth 1.0, OAuth 2.0, Hawk, AWS Signature v4. Auth is inherited from folders and collections.
+- OAuth 2.0 **Get New Access Token** uses Postman's token settings from the collection. It supports the authorization code (with or without PKCE), implicit, password and client credentials grants, plus refresh, and the auth/token request parameters under advanced options. Settings can reference `{{variables}}`, including collection variables marked as *secret*. The token is written to the auth's Access Token field, as Postman's "Use Token" does. For browser grants, a callback URL on `http://localhost:<port>/…` or `http://127.0.0.1:<port>/…` is captured automatically. With any other callback URL (such as Postman's `oauth.pstmn.io`), you paste the redirected URL back into httpman.
 - Variable scopes work like Postman's: global → collection → environment → data → local. Dynamic variables (`{{$guid}}`, `{{$timestamp}}`, `{{$randomEmail}}`, …) are supported.
 - Cookie jar with a cookie manager. Redirect, SSL and proxy settings. Timings (DNS/TCP/TLS/TTFB). Response preview for HTML, images and PDF.
 - History, a console with request/response details, and light/dark themes.

@@ -1106,6 +1106,51 @@ input[type='radio'] {
   justify-self: start;
 }
 
+.auth-section {
+  padding: 12px 0 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.oauth2-params .form-row .btn {
+  justify-self: start;
+}
+
+.oauth2-param {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 2px 212px;
+}
+
+.oauth2-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.oauth2-actions .info-box p {
+  margin: 0 0 6px;
+}
+
+.row-gap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-gap .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.error-text {
+  color: var(--fail);
+  white-space: pre-wrap;
+}
+
 .field-label {
   display: block;
   font-size: 12px;

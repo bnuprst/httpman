@@ -27,7 +27,32 @@ export default function CollectionEditor({ tab }: { tab: CollectionTab }) {
 
   const panes = isFolder ? ['overview', 'auth', 'prerequest', 'tests'] : ['overview', 'auth', 'prerequest', 'tests', 'variables'];
   const labels: Record<string, string> = { overview: 'Overview', auth: 'Authorization', prerequest: 'Pre-request Script', tests: 'Tests', variables: 'Variables' };
-  const vars: KV[] = (d.variable || []).map((v) => ({ key: v.key, value: varValueString(v.value), disabled: v.disabled, description: typeof v.description === 'string' ? v.description : '' }));
+  const vars: KV[] = (d.variable || []).map((v) => ({
+    key: v.key,
+    value: varValueString(v.value),
+    disabled: v.disabled,
+    description: typeof v.description === 'string' ? v.description : '',
+    type: v.type === 'secret' ? 'secret' : 'default',
+  }));
+  // Postman marks secret collection variables with type "secret"; any other
+  // type (string, boolean, ...) is kept unless the user changes it.
+  const setVars = (rows: KV[]) =>
+    set({
+      variable: rows.map((r, i) => {
+        const prev = (d.variable || [])[i];
+        const v: Variable = { ...(prev || {}), key: r.key, value: prev && varValueString(prev.value) === r.value ? prev.value : r.value ?? '' };
+        if (r.disabled) v.disabled = true;
+        else delete v.disabled;
+        if (r.description) v.description = r.description;
+        else delete v.description;
+        if (r.type === 'secret') v.type = 'secret';
+        else if (v.type === 'secret') delete v.type;
+        return v;
+      }),
+    });
+  // Collection variables as currently edited, so unsaved secrets can be used
+  // to get an OAuth 2.0 token.
+  const tokenCollection = () => (coll ? (isFolder ? coll : { ...coll, variable: d.variable }) : null);
 
   return (
     <div className="editor-page">
@@ -65,7 +90,14 @@ export default function CollectionEditor({ tab }: { tab: CollectionTab }) {
         )}
         {pane === 'auth' && (
           <div className="scroll">
-            <AuthEditor auth={d.auth} allowInherit={isFolder} inheritedFrom={inherited} collectionId={tab.collectionId} onChange={(a: Auth | null) => set({ auth: a ?? undefined })} />
+            <AuthEditor
+              auth={d.auth}
+              allowInherit={isFolder}
+              inheritedFrom={inherited}
+              collectionId={tab.collectionId}
+              tokenCollection={tokenCollection}
+              onChange={(a: Auth | null) => set({ auth: a ?? undefined })}
+            />
           </div>
         )}
         {pane === 'prerequest' && <ScriptEditor kind="prerequest" value={getScript(d.event, 'prerequest')} onChange={(v) => set({ event: setScript(d.event, 'prerequest', v) })} onSave={save} />}
@@ -78,19 +110,24 @@ export default function CollectionEditor({ tab }: { tab: CollectionTab }) {
               keyPlaceholder="Variable"
               collectionId={tab.collectionId}
               description
-              onChange={(rows) =>
-                set({
-                  variable: rows.map((r, i) => {
-                    const prev = (d.variable || [])[i];
-                    const v: Variable = { ...(prev || {}), key: r.key, value: prev && varValueString(prev.value) === r.value ? prev.value : r.value ?? '' };
-                    if (r.disabled) v.disabled = true;
-                    else delete v.disabled;
-                    if (r.description) v.description = r.description;
-                    else delete v.description;
-                    return v;
-                  }),
-                })
-              }
+              secretValues
+              onChange={setVars}
+              extraColumn={{
+                title: 'Type',
+                render: (r, idx) => (
+                  <select
+                    value={r.type === 'secret' ? 'secret' : 'default'}
+                    onChange={(e) => {
+                      const next = [...vars];
+                      next[idx] = { ...next[idx], type: e.target.value };
+                      setVars(next);
+                    }}
+                  >
+                    <option value="default">default</option>
+                    <option value="secret">secret</option>
+                  </select>
+                ),
+              }}
             />
           </div>
         )}
