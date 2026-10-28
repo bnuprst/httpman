@@ -179,20 +179,25 @@ func (w *Workspace) SaveCollectionRaw(data []byte) (string, error) {
 }
 
 // ImportCollection parses any supported collection format, normalizes it to
-// v2.1 (keeping unknown fields) and stores it. A colliding id is replaced.
+// v2.1 (keeping unknown fields), moves literal OAuth 2.0 settings into
+// collection variables and stores it. A colliding id is replaced.
 func (w *Workspace) ImportCollection(data []byte) (*collection.Collection, []byte, error) {
 	out, c, err := collection.NormalizeRaw(data)
 	if err != nil {
 		return nil, nil, err
 	}
+	var root map[string]any
+	dec := json.NewDecoder(bytes.NewReader(out))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return nil, nil, err
+	}
+	changed := collection.ExtractAuthVariables(root, w.environmentVarNames())
 	if safeID(c.Info.PostmanID) != nil || w.exists(c.Info.PostmanID) {
-		var root map[string]any
-		dec := json.NewDecoder(bytes.NewReader(out))
-		dec.UseNumber()
-		if err := dec.Decode(&root); err != nil {
-			return nil, nil, err
-		}
 		root["info"].(map[string]any)["_postman_id"] = uuid.NewString()
+		changed = true
+	}
+	if changed {
 		if out, err = pretty(root); err != nil {
 			return nil, nil, err
 		}
@@ -203,6 +208,21 @@ func (w *Workspace) ImportCollection(data []byte) (*collection.Collection, []byt
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return c, out, writeFile(w.collectionPath(c.Info.PostmanID), out)
+}
+
+// environmentVarNames returns the variable names defined in any environment.
+// Environment variables take precedence over collection variables.
+func (w *Workspace) environmentVarNames() map[string]bool {
+	names := map[string]bool{}
+	envs, _ := w.Environments()
+	for _, m := range envs {
+		if env, err := w.Environment(m.ID); err == nil {
+			for _, v := range env.Values {
+				names[v.Key] = true
+			}
+		}
+	}
+	return names
 }
 
 func (w *Workspace) exists(id string) bool {

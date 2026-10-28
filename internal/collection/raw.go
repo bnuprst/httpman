@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -144,4 +145,114 @@ func normalizeLists(obj map[string]any) {
 		}
 		obj["variable"] = list
 	}
+}
+
+// oauth2Vars maps the OAuth 2.0 settings that ExtractAuthVariables moves into
+// collection variables to the variable names used for them.
+var oauth2Vars = []struct{ key, name string }{
+	{"authUrl", "authUrl"},
+	{"accessTokenUrl", "accessTokenUrl"},
+	{"refreshTokenUrl", "refreshTokenUrl"},
+	{"redirect_uri", "oauth2RedirectUri"},
+	{"clientId", "clientId"},
+	{"clientSecret", "clientSecret"},
+	{"username", "oauth2Username"},
+	{"password", "oauth2Password"},
+	{"scope", "oauth2Scope"},
+}
+
+// ExtractAuthVariables replaces literal OAuth 2.0 settings (client id and
+// secret, token urls, ...) in the collection, folder and request auth of a
+// normalized v2.1 collection with {{variable}} references and adds those
+// variables to the collection. Equal values share one variable; a different
+// value gets a numbered name (clientSecret2). Names in reserved (variables of
+// scopes that take precedence over collection variables, such as
+// environments) and disabled collection variables are never used, so a
+// reference always resolves to the imported value. It reports whether
+// anything changed.
+func ExtractAuthVariables(root map[string]any, reserved map[string]bool) bool {
+	list, _ := root["variable"].([]any)
+	// existing holds the value of each enabled collection variable; a taken
+	// name (disabled or reserved) maps to nil.
+	existing := map[string]*string{}
+	for name := range reserved {
+		existing[name] = nil
+	}
+	for _, raw := range list {
+		if v, ok := raw.(map[string]any); ok {
+			if k, _ := v["key"].(string); k != "" && !reserved[k] {
+				if d, _ := v["disabled"].(bool); d {
+					existing[k] = nil
+				} else {
+					val := ValueString(v["value"])
+					existing[k] = &val
+				}
+			}
+		}
+	}
+	changed := false
+	extract := func(obj map[string]any) {
+		auth, ok := obj["auth"].(map[string]any)
+		if !ok || auth["type"] != "oauth2" {
+			return
+		}
+		params, _ := auth["oauth2"].([]any)
+		for _, raw := range params {
+			p, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			key, _ := p["key"].(string)
+			val, ok := p["value"].(string)
+			if !ok || val == "" || strings.Contains(val, "{{") {
+				continue
+			}
+			for _, ov := range oauth2Vars {
+				if ov.key != key {
+					continue
+				}
+				name := ov.name
+				for n := 2; ; n++ {
+					cur, ok := existing[name]
+					if !ok || (cur != nil && *cur == val) {
+						break
+					}
+					name = fmt.Sprintf("%s%d", ov.name, n)
+				}
+				if _, ok := existing[name]; !ok {
+					typ := "string"
+					if key == "clientSecret" || key == "password" {
+						typ = "secret"
+					}
+					existing[name] = &val
+					list = append(list, map[string]any{"key": name, "value": val, "type": typ})
+				}
+				p["value"] = "{{" + name + "}}"
+				changed = true
+			}
+		}
+	}
+	extract(root)
+	var walk func(items []any)
+	walk = func(items []any) {
+		for _, raw := range items {
+			it, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			extract(it)
+			if req, ok := it["request"].(map[string]any); ok {
+				extract(req)
+			}
+			if children, ok := it["item"].([]any); ok {
+				walk(children)
+			}
+		}
+	}
+	items, _ := root["item"].([]any)
+	walk(items)
+	if changed {
+		root["variable"] = list
+	}
+	return changed
 }

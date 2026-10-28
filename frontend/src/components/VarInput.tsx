@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { copyText } from '../api';
 import { useStore } from '../store';
 import { varValueString } from '../util';
 
@@ -8,21 +9,24 @@ export function useVariableLookup(collectionId?: string) {
   const globals = useStore((s) => s.globals);
   const coll = useStore((s) => (collectionId ? s.collections[collectionId] : undefined));
   return useMemo(() => {
-    const scopes: { name: string; vars: Map<string, unknown> }[] = [];
+    const scopes: { name: string; vars: Map<string, { value: unknown; secret: boolean }> }[] = [];
     const add = (name: string, list: { key: string; value?: unknown; type?: string; enabled?: boolean; disabled?: boolean }[] | undefined) => {
-      const m = new Map<string, unknown>();
+      const m = new Map<string, { value: unknown; secret: boolean }>();
       (list || []).forEach((v) => {
-        // Secret values are never shown in hovers.
-        if (v.enabled !== false && !v.disabled) m.set(v.key, v.type === 'secret' ? '••••••' : v.value);
+        if (v.enabled !== false && !v.disabled) m.set(v.key, { value: v.value, secret: v.type === 'secret' });
       });
       scopes.push({ name, vars: m });
     };
     add('Environment', env?.values);
     add('Collection', coll?.variable);
     add('Global', globals.values);
-    return (name: string): { value: string; scope: string } | null => {
+    // Secret values are never shown in hovers; reveal is only for copying.
+    return (name: string, reveal = false): { value: string; scope: string } | null => {
       if (name.startsWith('$')) return { value: '(dynamic)', scope: 'Dynamic' };
-      for (const s of scopes) if (s.vars.has(name)) return { value: varValueString(s.vars.get(name)), scope: s.name };
+      for (const s of scopes) {
+        const v = s.vars.get(name);
+        if (v) return { value: v.secret && !reveal ? '••••••' : varValueString(v.value), scope: s.name };
+      }
       return null;
     };
   }, [env, globals, coll]);
@@ -69,6 +73,23 @@ export default function VarInput({ value, onChange, placeholder, className, coll
         })
         .join('\n')
     : undefined;
+  // Copies a hidden value with its {{variables}} resolved, e.g. a client secret for use elsewhere.
+  // Nested references resolve up to 10 levels deep, like vars.Resolver.Replace.
+  const copy = () => {
+    let text = v;
+    for (let depth = 0; depth < 10 && text.includes('{{'); depth++) {
+      let changed = false;
+      text = text.replace(/\{\{([^{}]+)\}\}/g, (m, name: string) => {
+        const n = name.trim();
+        const r = n.startsWith('$') ? null : lookup(n, true);
+        if (!r) return m;
+        changed = true;
+        return r.value;
+      });
+      if (!changed) break;
+    }
+    void copyText(text).then(() => useStore.getState().toast('Copied to clipboard', 'success'));
+  };
   return (
     <div className={'varinput ' + (className || '')} title={title} onMouseEnter={() => setHover(title || null)} onMouseLeave={() => setHover(null)}>
       {hasVars && type !== 'password' && (
@@ -104,6 +125,11 @@ export default function VarInput({ value, onChange, placeholder, className, coll
           }
         }}
       />
+      {type === 'password' && v && (
+        <button type="button" className="icon-btn varinput-copy" title="Copy value (variables resolved)" onClick={copy}>
+          ⧉
+        </button>
+      )}
     </div>
   );
 }

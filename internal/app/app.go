@@ -296,11 +296,12 @@ func (a *App) importData(name string, data []byte, res *ImportResult) {
 		Globals      json.RawMessage   `json:"globals"`
 	}
 	if json.Unmarshal(data, &dump) == nil && (len(dump.Collections) > 0 || len(dump.Environments) > 0) {
-		for _, c := range dump.Collections {
-			a.importData(name, c, res)
-		}
+		// Environments first: collection import keeps clear of their variable names.
 		for _, e := range dump.Environments {
 			a.importData(name, e, res)
+		}
+		for _, c := range dump.Collections {
+			a.importData(name, c, res)
 		}
 		return
 	}

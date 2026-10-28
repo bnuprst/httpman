@@ -920,6 +920,11 @@ input[type='radio'] {
   padding-right: 9px;
 }
 
+.varinput-copy {
+  flex: none;
+  align-self: center;
+}
+
 .varinput input.has-mirror {
   color: transparent;
   caret-color: var(--text);

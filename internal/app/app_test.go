@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bnuprst/httpman/internal/collection"
 	"github.com/bnuprst/httpman/internal/vars"
 	"github.com/bnuprst/httpman/internal/workspace"
 )
@@ -166,5 +167,44 @@ func TestOAuth2TokenFromCollectionSecrets(t *testing.T) {
 	}
 	if basic != "Basic YXBwOnMzY3JldA==" || form != "audience=api&grant_type=client_credentials" {
 		t.Errorf("token request: auth=%q form=%q", basic, form)
+	}
+}
+
+func TestImportExtractsOAuth2Variables(t *testing.T) {
+	ws, _ := workspace.Open(t.TempDir())
+	a := New(ws, "test")
+	oauth := func(secret string) string {
+		return `"auth":{"type":"oauth2","oauth2":[{"key":"clientId","value":"id1"},{"key":"clientSecret","value":"` + secret + `"},{"key":"accessTokenUrl","value":"{{tokenUrl}}"},{"key":"authUrl","value":"https://a"},{"key":"grant_type","value":"client_credentials"}]}`
+	}
+	// Environment variables win over collection variables, so their names are not used.
+	if _, err := a.SaveEnvironment(vars.Environment{Name: "E", Values: []vars.Var{{Key: "clientSecret", Value: "env", Enabled: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	coll := `{"info":{"_postman_id":"o1","name":"O","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+	"variable":[{"key":"clientId","value":"other"},{"key":"authUrl","value":"https://a","disabled":true}],
+	"item":[{"name":"F","item":[{"name":"R1","request":{"method":"GET","url":"x",` + oauth("s1") + `}}]},
+	  {"name":"R2","request":{"method":"GET","url":"x",` + oauth("s1") + `}},
+	  {"name":"R3","request":{"method":"GET","url":"x",` + oauth("s2") + `}}]}`
+	res, err := a.ImportText(coll)
+	if err != nil || len(res.Collections) != 1 {
+		t.Fatalf("import: %v %+v", err, res)
+	}
+	c, err := collection.Parse(res.Collections[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, v := range c.Variable {
+		got[v.Key] = collection.ValueString(v.Value) + "/" + v.Type
+	}
+	want := map[string]string{"clientId": "other/", "clientId2": "id1/string", "clientSecret2": "s1/secret", "clientSecret3": "s2/secret", "authUrl": "https://a/", "authUrl2": "https://a/string"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("variables: %v", got)
+	}
+	r1 := c.Item[0].Item[0].Request.Auth
+	r3 := c.Item[2].Request.Auth
+	if r1.Get("clientId") != "{{clientId2}}" || r1.Get("clientSecret") != "{{clientSecret2}}" || r3.Get("clientSecret") != "{{clientSecret3}}" || r1.Get("authUrl") != "{{authUrl2}}" ||
+		r1.Get("accessTokenUrl") != "{{tokenUrl}}" || r1.Get("grant_type") != "client_credentials" {
+		t.Fatalf("auth: %+v / %+v", r1, r3)
 	}
 }
