@@ -557,6 +557,69 @@ func (b *Body) RawLanguage() string {
 	return o.Raw.Language
 }
 
+// RawPayload returns the raw body as it goes on the wire. Like Postman, JSON
+// bodies may contain // and /* */ comments, which are stripped before sending.
+func (b *Body) RawPayload() string {
+	if b == nil {
+		return ""
+	}
+	if b.RawLanguage() != "json" {
+		return b.Raw
+	}
+	return StripJSONComments(b.Raw)
+}
+
+// StripJSONComments removes // line comments and /* */ block comments that
+// appear outside of string literals. A line left blank by the removal is
+// dropped; other lines and line breaks are kept.
+func StripJSONComments(s string) string {
+	if !strings.Contains(s, "//") && !strings.Contains(s, "/*") {
+		return s
+	}
+	var out strings.Builder
+	out.Grow(len(s))
+	inStr := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case inStr:
+			out.WriteByte(c)
+			if c == '\\' && i+1 < len(s) {
+				i++
+				out.WriteByte(s[i])
+			} else if c == '"' {
+				inStr = false
+			}
+		case c == '"':
+			inStr = true
+			out.WriteByte(c)
+		case c == '/' && i+1 < len(s) && s[i+1] == '/':
+			for i+1 < len(s) && s[i+1] != '\n' && s[i+1] != '\r' {
+				i++
+			}
+		case c == '/' && i+1 < len(s) && s[i+1] == '*':
+			end := strings.Index(s[i+2:], "*/")
+			if end < 0 {
+				end = len(s) - i - 2
+			}
+			// Keep the line breaks so lines stay aligned with the input.
+			out.WriteString(strings.Repeat("\n", strings.Count(s[i+2:i+2+end], "\n")))
+			i += end + 3
+		default:
+			out.WriteByte(c)
+		}
+	}
+	in, stripped := strings.Split(s, "\n"), strings.Split(out.String(), "\n")
+	kept := stripped[:0]
+	for i, line := range stripped {
+		if strings.TrimSpace(line) == "" && strings.TrimSpace(in[i]) != "" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
 // AuthParam is a single auth attribute (v2.1 style).
 type AuthParam struct {
 	Key   string `json:"key"`

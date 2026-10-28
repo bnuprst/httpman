@@ -340,7 +340,7 @@ func (s *Snippet) rawBody() string {
 	}
 	switch s.Body.Mode {
 	case "raw":
-		return s.Body.Raw
+		return s.Body.RawPayload()
 	case "urlencoded":
 		var parts []string
 		for _, kv := range s.Body.URLEncoded {

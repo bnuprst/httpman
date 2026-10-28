@@ -506,7 +506,7 @@ func buildBody(b *collection.Body, baseDir string) ([]byte, string, error) {
 			"javascript": "application/javascript",
 			"text":       "text/plain",
 		}[b.RawLanguage()]
-		return []byte(b.Raw), ct, nil
+		return []byte(b.RawPayload()), ct, nil
 	case "urlencoded":
 		var parts []string
 		for _, kv := range b.URLEncoded {
