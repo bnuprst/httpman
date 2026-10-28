@@ -27,8 +27,11 @@ jobs:
         include:
           - { runner: windows-latest, target: windows/amd64 }
           - { runner: windows-latest, target: windows/arm64 }
-          - { runner: macos-14, target: darwin/arm64 }
-          - { runner: macos-14, target: darwin/amd64 }
+          # macOS disabled for now: macos-14 jobs sat queued without a runner
+          # until they were cancelled. Re-enable here and in
+          # npm/httpman-app/package.json (optionalDependencies) together.
+          # - { runner: macos-14, target: darwin/arm64 }
+          # - { runner: macos-14, target: darwin/amd64 }
           - { runner: ubuntu-22.04, target: linux/amd64 }
           - { runner: ubuntu-22.04-arm, target: linux/arm64 }
     runs-on: ${{ matrix.runner }}

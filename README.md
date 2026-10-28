@@ -94,7 +94,7 @@ Collections and environments are ordinary Postman exports, so you can keep a wor
 ## Requirements
 
 - **Windows 10/11:** uses the Microsoft Edge **WebView2** runtime, which is preinstalled on current Windows.
-- **macOS 11+.**
+- **macOS 11+** (build from source for now; no prebuilt binary is published).
 - **Linux:** GTK 3 and WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`). The CLI has no runtime dependencies.
 
 The npm package is a small launcher plus one prebuilt binary for your platform (`httpman-app-<os>-<arch>`), installed as an optional dependency. Nothing is downloaded at install time.
@@ -136,7 +136,7 @@ Tests: `go test ./...` and `cd frontend && npm run typecheck`. After changing `s
 
 Push a tag `vX.Y.Z`. The release workflow does the following:
 
-1. Builds the binaries on Windows, macOS and Linux.
+1. Builds the binaries on Windows and Linux. macOS builds are disabled for now, so there is no prebuilt macOS binary on npm; build from source instead.
 2. Attaches them to a GitHub release.
 3. Stages the npm packages through npm trusted publishing. Each package trusts `release.yml` in the `npm` environment, so no npm token is stored.
 
