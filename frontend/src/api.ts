@@ -1,6 +1,7 @@
 // Thin typed wrapper around the Wails bindings (window.go.app.App) and
 // runtime (window.runtime). Methods map 1:1 to internal/app/app.go.
 import type {
+  Auth,
   Collection,
   Cookie,
   Environment,
@@ -55,6 +56,22 @@ export interface RunInput {
   only?: string[];
 }
 
+export interface OAuth2Input {
+  requestId: string;
+  collection?: Collection | null;
+  auth: Auth;
+  environmentId?: string;
+  refreshToken?: string;
+}
+
+export interface OAuth2Token {
+  accessToken: string;
+  tokenType?: string;
+  refreshToken?: string;
+  scope?: string;
+  expiresIn?: number;
+}
+
 const toInput = (i: SendInput) => ({ ...i, collection: i.collection ?? null });
 
 export const api = {
@@ -82,6 +99,8 @@ export const api = {
   cancel: (id: string) => call<void>('Cancel', id),
   resolveRequest: (i: SendInput) => call<Request>('ResolveRequest', toInput(i)),
   generateCode: (i: SendInput, lang: string) => call<string>('GenerateCode', toInput(i), lang),
+  getOAuth2Token: (i: OAuth2Input) => call<OAuth2Token>('GetOAuth2Token', { ...i, collection: i.collection ?? null }),
+  submitOAuth2Callback: (requestId: string, url: string) => call<void>('SubmitOAuth2Callback', requestId, url),
   startRun: (i: RunInput) => call<string>('StartRun', i),
   loadDataFile: (path: string) => call<{ columns: string[]; rows: Record<string, unknown>[] }>('LoadDataFile', path),
   dynamicVariables: () => call<string[]>('DynamicVariables'),

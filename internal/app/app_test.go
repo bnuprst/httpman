@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -103,5 +104,67 @@ func TestImportCurlAndDump(t *testing.T) {
 	res, _ = a.ImportText(dump)
 	if len(res.Collections) != 1 || len(res.Environments) != 1 || len(res.Errors) != 0 {
 		t.Fatalf("%+v", res)
+	}
+}
+
+func TestOAuth2TokenFromCollectionSecrets(t *testing.T) {
+	var form, basic string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		form = r.PostForm.Encode()
+		basic = r.Header.Get("Authorization")
+		if r.URL.Path != "/oauth/token" {
+			w.WriteHeader(404)
+			return
+		}
+		fmt.Fprint(w, `{"access_token":"T","token_type":"Bearer"}`)
+	}))
+	defer srv.Close()
+
+	ws, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New(ws, "test")
+	// As exported by Postman: collection-level secrets and OAuth 2.0 settings
+	// referencing them.
+	coll := `{"info":{"_postman_id":"c2","name":"C","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+	"auth":{"type":"oauth2","oauth2":[
+	  {"key":"tokenRequestParams","value":[{"key":"audience","value":"{{aud}}","enabled":true,"send_as":"request_body"}],"type":"any"},
+	  {"key":"grant_type","value":"client_credentials","type":"string"},
+	  {"key":"accessTokenUrl","value":"{{baseUrl}}/oauth/token","type":"string"},
+	  {"key":"clientId","value":"{{clientId}}","type":"string"},
+	  {"key":"clientSecret","value":"{{clientSecret}}","type":"string"},
+	  {"key":"tokenName","value":"svc","type":"string"},
+	  {"key":"addTokenTo","value":"header","type":"string"}]},
+	"variable":[{"key":"baseUrl","value":"` + srv.URL + `"},{"key":"clientId","value":"app"},
+	  {"key":"clientSecret","value":"s3cret","type":"secret"},{"key":"aud","value":"api"}],
+	"item":[]}`
+	if res, err := a.ImportText(coll); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("import: %v %+v", err, res)
+	}
+	stored, _ := ws.CollectionRaw("c2")
+	var c, orig struct {
+		Auth     json.RawMessage `json:"auth"`
+		Variable json.RawMessage `json:"variable"`
+	}
+	_ = json.Unmarshal(stored, &c)
+	_ = json.Unmarshal([]byte(coll), &orig)
+	// Import keeps Postman's OAuth 2.0 settings and secret variables as they are.
+	same := func(x, y json.RawMessage) bool {
+		var a, b any
+		_ = json.Unmarshal(x, &a)
+		_ = json.Unmarshal(y, &b)
+		return reflect.DeepEqual(a, b)
+	}
+	if !same(c.Auth, orig.Auth) || !same(c.Variable, orig.Variable) {
+		t.Errorf("import changed auth or variables:\n%s\n%s", c.Auth, c.Variable)
+	}
+	tok, err := a.GetOAuth2Token(OAuth2Input{RequestID: "r", Collection: stored, Auth: c.Auth})
+	if err != nil || tok.AccessToken != "T" {
+		t.Fatalf("token: %+v %v", tok, err)
+	}
+	if basic != "Basic YXBwOnMzY3JldA==" || form != "audience=api&grant_type=client_credentials" {
+		t.Errorf("token request: auth=%q form=%q", basic, form)
 	}
 }

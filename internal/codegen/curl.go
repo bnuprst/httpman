@@ -277,7 +277,9 @@ func (s *Snippet) headers() collection.Headers {
 				h = append(h, collection.Header{Key: s.Auth.Get("key"), Value: s.Auth.Get("value")})
 			}
 		case "oauth2":
-			h = append(h, collection.Header{Key: "Authorization", Value: strings.TrimSpace(defaultStr(s.Auth.Get("headerPrefix"), "Bearer") + " " + s.Auth.Get("accessToken"))})
+			if v, inQuery, ok := s.Auth.OAuth2Credential(); ok && !inQuery {
+				h = append(h, collection.Header{Key: "Authorization", Value: v})
+			}
 		}
 	}
 	if s.Body != nil {
@@ -314,12 +316,20 @@ func hasHeader(h collection.Headers, k string) bool {
 }
 
 func (s *Snippet) url() string {
-	if s.Auth != nil && s.Auth.Type == "apikey" && s.Auth.Get("in") == "query" {
+	add := func(k, v string) string {
 		sep := "?"
 		if strings.Contains(s.URL, "?") {
 			sep = "&"
 		}
-		return s.URL + sep + url.QueryEscape(s.Auth.Get("key")) + "=" + url.QueryEscape(s.Auth.Get("value"))
+		return s.URL + sep + url.QueryEscape(k) + "=" + url.QueryEscape(v)
+	}
+	if s.Auth != nil && s.Auth.Type == "apikey" && s.Auth.Get("in") == "query" {
+		return add(s.Auth.Get("key"), s.Auth.Get("value"))
+	}
+	if s.Auth != nil && s.Auth.Type == "oauth2" {
+		if v, inQuery, ok := s.Auth.OAuth2Credential(); ok && inQuery {
+			return add("access_token", v)
+		}
 	}
 	return s.URL
 }

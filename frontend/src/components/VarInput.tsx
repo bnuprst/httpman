@@ -9,10 +9,11 @@ export function useVariableLookup(collectionId?: string) {
   const coll = useStore((s) => (collectionId ? s.collections[collectionId] : undefined));
   return useMemo(() => {
     const scopes: { name: string; vars: Map<string, unknown> }[] = [];
-    const add = (name: string, list: { key: string; value?: unknown; enabled?: boolean; disabled?: boolean }[] | undefined) => {
+    const add = (name: string, list: { key: string; value?: unknown; type?: string; enabled?: boolean; disabled?: boolean }[] | undefined) => {
       const m = new Map<string, unknown>();
       (list || []).forEach((v) => {
-        if (v.enabled !== false && !v.disabled) m.set(v.key, v.value);
+        // Secret values are never shown in hovers.
+        if (v.enabled !== false && !v.disabled) m.set(v.key, v.type === 'secret' ? '••••••' : v.value);
       });
       scopes.push({ name, vars: m });
     };

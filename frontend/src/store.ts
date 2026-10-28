@@ -506,6 +506,19 @@ export const useStore = create<State>((set, get) => ({
   },
 }));
 
+/**
+ * The collection whose variables an OAuth 2.0 token request uses: the stored
+ * collection, with the variables of an open, unsaved collection settings tab.
+ */
+export function collectionForToken(collectionId: string | undefined): Collection | null {
+  if (!collectionId) return null;
+  const st = useStore.getState();
+  const c = st.collections[collectionId];
+  if (!c) return null;
+  const tab = st.tabs.find((t) => t.kind === 'collection' && t.collectionId === collectionId && !t.folderId && t.dirty);
+  return tab && tab.kind === 'collection' ? { ...c, variable: tab.draft.variable } : c;
+}
+
 /** Applies collection variables changed by scripts and saves the collection. */
 export function syncCollectionVariables(collectionId: string, vars: Var[]) {
   const st = useStore.getState();

@@ -118,15 +118,36 @@ func Resolve(r *collection.Request, res vars.Resolver) *httpclient.Request {
 				continue
 			}
 			for _, p := range list {
-				if s, ok := p.Value.(string); ok {
-					p.Value = rep(s)
-				}
+				p.Value = resolveAuthValue(p.Value, rep)
 				a.Params[k] = append(a.Params[k], p)
 			}
 		}
 		out.Auth = a
 	}
 	return out
+}
+
+// resolveAuthValue substitutes variables in an auth parameter value. Besides
+// plain strings this covers lists such as OAuth 2.0's tokenRequestParams
+// ([{key, value, enabled, send_as}]); the input is not modified.
+func resolveAuthValue(v any, rep func(string) string) any {
+	switch t := v.(type) {
+	case string:
+		return rep(t)
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = resolveAuthValue(e, rep)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = resolveAuthValue(e, rep)
+		}
+		return out
+	}
+	return v
 }
 
 func resolveKVs(in []collection.KV, rep func(string) string) []collection.KV {

@@ -51,13 +51,39 @@ type App struct {
 	settings workspace.Settings
 	client   *httpclient.Client
 	jar      *cookies.Jar
-	cancels  map[string]context.CancelFunc
+	pending  map[string]*pendingOp // in-flight sends, runs and token requests
 	saveJar  *time.Timer
+}
+
+// pendingOp is an in-flight operation the UI can cancel by its ID.
+type pendingOp struct {
+	cancel context.CancelFunc
+	paste  chan string // OAuth 2.0: redirect URLs pasted in the UI
+}
+
+// track registers an operation under id (if not empty). The returned func
+// cancels its context and unregisters it, unless another operation has
+// taken over the same id since.
+func (a *App) track(id string, cancel context.CancelFunc, paste chan string) (untrack func()) {
+	op := &pendingOp{cancel: cancel, paste: paste}
+	if id != "" {
+		a.mu.Lock()
+		a.pending[id] = op
+		a.mu.Unlock()
+	}
+	return func() {
+		cancel()
+		a.mu.Lock()
+		if a.pending[id] == op {
+			delete(a.pending, id)
+		}
+		a.mu.Unlock()
+	}
 }
 
 // New creates the app backend.
 func New(ws *workspace.Workspace, version string) *App {
-	a := &App{ws: ws, version: version, cancels: map[string]context.CancelFunc{}, jar: cookies.New()}
+	a := &App{ws: ws, version: version, pending: map[string]*pendingOp{}, jar: cookies.New()}
 	a.settings = ws.Settings()
 	if a.settings.SaveCookies {
 		_ = a.jar.Load(ws.CookiesPath())
@@ -578,17 +604,7 @@ func (a *App) Send(in SendInput) (*SendResult, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if in.RequestID != "" {
-		a.mu.Lock()
-		a.cancels[in.RequestID] = cancel
-		a.mu.Unlock()
-	}
-	defer func() {
-		cancel()
-		a.mu.Lock()
-		delete(a.cancels, in.RequestID)
-		a.mu.Unlock()
-	}()
+	defer a.track(in.RequestID, cancel, nil)()
 	ex := sess.Execute(ctx, item, parents, runner.IterationInfo{})
 	if ctx.Err() != nil && ex.Error != "" {
 		ex.Error = "Request cancelled"
@@ -641,11 +657,92 @@ func mustJSON(v any) json.RawMessage {
 // Cancel aborts an in-flight request or run.
 func (a *App) Cancel(requestID string) {
 	a.mu.Lock()
-	cancel := a.cancels[requestID]
+	op := a.pending[requestID]
 	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if op != nil {
+		op.cancel()
 	}
+}
+
+// ---- OAuth 2.0 ----
+
+// OAuth2Input asks for a new OAuth 2.0 token for the auth being edited.
+type OAuth2Input struct {
+	RequestID     string          `json:"requestId"`  // used for cancellation and pasted redirects
+	Collection    json.RawMessage `json:"collection"` // for collection variables (optional)
+	Auth          json.RawMessage `json:"auth"`       // the oauth2 auth, with {{variables}}
+	EnvironmentID string          `json:"environmentId"`
+	RefreshToken  string          `json:"refreshToken"` // set to refresh instead of starting a new grant
+}
+
+// oauth2Timeout bounds how long a browser authorization may take.
+var oauth2Timeout = 5 * time.Minute
+
+// GetOAuth2Token runs the token request configured by a Postman OAuth 2.0
+// auth, resolving {{variables}} (including collection variables) first. For
+// browser-based grants it emits "oauth2:authorize" with the URL to open; the
+// redirect is captured on loopback redirect URIs or pasted through
+// SubmitOAuth2Callback.
+func (a *App) GetOAuth2Token(in OAuth2Input) (*httpclient.OAuth2Token, error) {
+	item, err := json.Marshal(map[string]any{"request": map[string]any{"method": "GET", "url": "", "auth": in.Auth}})
+	if err != nil {
+		return nil, err
+	}
+	sess, it, _, _, _, err := a.prepare(SendInput{Collection: in.Collection, Item: item, EnvironmentID: in.EnvironmentID})
+	if err != nil {
+		return nil, err
+	}
+	auth := runner.Resolve(it.Request, sess.Resolver(nil)).Auth
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pasted := make(chan string, 1)
+	defer a.track(in.RequestID, cancel, pasted)()
+
+	authorize := func(ctx context.Context, authURL, redirectURI string) (string, error) {
+		l, err := httpclient.ListenRedirect(redirectURI)
+		if err != nil {
+			return "", err
+		}
+		var captured <-chan string
+		if l != nil {
+			defer l.Close()
+			captured = l.C
+		}
+		a.emit("oauth2:authorize", map[string]any{"requestId": in.RequestID, "url": authURL, "redirectUri": redirectURI, "captured": l != nil})
+		timer := time.NewTimer(oauth2Timeout)
+		defer timer.Stop()
+		select {
+		case u := <-captured:
+			return u, nil
+		case u := <-pasted:
+			return u, nil
+		case <-timer.C:
+			return "", errors.New("timed out waiting for the authorization redirect")
+		case <-ctx.Done():
+			return "", errors.New("cancelled")
+		}
+	}
+	tok, err := sess.Client.FetchOAuth2Token(ctx, auth, in.RefreshToken, authorize)
+	if err != nil && ctx.Err() != nil {
+		return nil, errors.New("cancelled")
+	}
+	return tok, err
+}
+
+// SubmitOAuth2Callback hands the redirect URL the user copied from the
+// browser to a pending GetOAuth2Token call.
+func (a *App) SubmitOAuth2Callback(requestID, redirectURL string) error {
+	a.mu.Lock()
+	op := a.pending[requestID]
+	a.mu.Unlock()
+	if op == nil || op.paste == nil {
+		return errors.New("no authorization is in progress")
+	}
+	select {
+	case op.paste <- redirectURL:
+	default:
+	}
+	return nil
 }
 
 // ResolveRequest substitutes variables (no scripts) for code generation.
@@ -720,16 +817,9 @@ func (a *App) StartRun(in RunInput) (string, error) {
 	sess.Console = func(e runner.ConsoleEntry) { a.emit("console", e) }
 
 	ctx, cancel := context.WithCancel(context.Background())
-	a.mu.Lock()
-	a.cancels[in.RunID] = cancel
-	a.mu.Unlock()
+	untrack := a.track(in.RunID, cancel, nil)
 	go func() {
-		defer func() {
-			cancel()
-			a.mu.Lock()
-			delete(a.cancels, in.RunID)
-			a.mu.Unlock()
-		}()
+		defer untrack()
 		sum, err := sess.Run(ctx, runner.RunOptions{FolderID: in.FolderID, Iterations: in.Iterations, Data: data, Delay: time.Duration(in.DelayMs) * time.Millisecond, Bail: in.Bail, Only: in.Only}, func(ev runner.RunEvent) {
 			if ev.Type == "done" {
 				return // emitted below, after variables are persisted
