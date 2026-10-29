@@ -1250,6 +1250,15 @@ input[type='radio'] {
   outline: none;
 }
 
+/* Comments in JSON bodies are stripped before sending; show them as inactive.
+   Nested spans are the grammar's error/token highlights, so override them too. */
+.code .cm-json-comment,
+.code .cm-json-comment * {
+  color: var(--muted) !important;
+  font-style: italic;
+  text-decoration: none !important;
+}
+
 /* scripts */
 .script-editor {
   display: flex;

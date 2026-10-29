@@ -1,4 +1,4 @@
-import CodeMirror, { EditorView, keymap } from '@uiw/react-codemirror';
+import CodeMirror, { Decoration, DecorationSet, EditorView, keymap, RangeSetBuilder, Text, ViewPlugin, ViewUpdate } from '@uiw/react-codemirror';
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { xml } from '@codemirror/lang-xml';
@@ -64,6 +64,50 @@ function pmComplete(ctx: CompletionContext): CompletionResult | null {
   return { from: word.from, options: pmCompletions.filter((c) => c.label.startsWith(word.text)), validFor: /^[\w.]*$/ };
 }
 
+// The JSON grammar has no comments, but // and /* */ comments are allowed in
+// raw bodies (stripped before sending), so mark them to show they're inactive.
+// The scan mirrors collection.StripJSONComments: comments outside strings only.
+const commentMark = Decoration.mark({ class: 'cm-json-comment' });
+
+function jsonComments(doc: Text): DecorationSet {
+  const b = new RangeSetBuilder<Decoration>();
+  const s = doc.toString();
+  if (!s.includes('//') && !s.includes('/*')) return b.finish();
+  let inStr = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (c === '\\') i++;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') inStr = true;
+    else if (c === '/' && s[i + 1] === '/') {
+      let end = i + 2;
+      while (end < s.length && s[end] !== '\n' && s[end] !== '\r') end++;
+      b.add(i, end, commentMark);
+      i = end - 1;
+    } else if (c === '/' && s[i + 1] === '*') {
+      const close = s.indexOf('*/', i + 2);
+      const end = close < 0 ? s.length : close + 2;
+      b.add(i, end, commentMark);
+      i = end - 1;
+    }
+  }
+  return b.finish();
+}
+
+const jsonCommentHighlight = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = jsonComments(view.state.doc);
+    }
+    update(u: ViewUpdate) {
+      if (u.docChanged) this.decorations = jsonComments(u.state.doc);
+    }
+  },
+  { decorations: (v) => v.decorations },
+);
+
 export type Lang = 'json' | 'javascript' | 'xml' | 'html' | 'text' | 'graphql';
 
 interface Props {
@@ -117,7 +161,7 @@ export default function Code({ value, onChange, lang = 'text', readOnly, height 
   const tabSize = useStore((s) => s.settings.editorTabSize) || 2;
   const extensions = useMemo(() => {
     const ext = [indentUnit.of(' '.repeat(tabSize)), EditorView.theme({ '&': { fontSize: fontSize + 'px' } })];
-    if (lang === 'json') ext.push(json());
+    if (lang === 'json') ext.push(json(), jsonCommentHighlight);
     else if (lang === 'javascript') ext.push(javascript());
     else if (lang === 'xml') ext.push(xml());
     else if (lang === 'html') ext.push(html());
