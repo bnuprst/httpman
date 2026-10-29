@@ -134,9 +134,9 @@ Tests: `go test ./...` and `cd frontend && npm run typecheck`. After changing `s
 
 ## Releasing
 
-Push a tag `vX.Y.Z`. The release workflow does the following:
+Push a tag `vX.Y.Z`. The CI workflow (`release.yml`) then does the following:
 
-1. Builds the binaries on Windows and Linux. macOS builds are disabled for now, so there is no prebuilt macOS binary on npm; build from source instead.
+1. Builds the binaries for Windows, macOS and Linux (the same builds CI runs on every PR).
 2. Attaches them to a GitHub release.
 3. Stages the npm packages through npm trusted publishing. Each package trusts `release.yml` in the `npm` environment, so no npm token is stored.
 

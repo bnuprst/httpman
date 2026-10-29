@@ -1,8 +1,13 @@
-name: Release
+# CI and releases in one workflow, so every platform build runs on each push
+# and PR instead of only when a tag is pushed. The file keeps the name
+# release.yml because each npm package's trusted publisher is bound to it.
+name: CI
 
 on:
   push:
+    branches: ['**']
     tags: ['v*']
+  pull_request:
   workflow_dispatch:
     inputs:
       version:
@@ -14,27 +19,65 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Supersede branch and PR runs, never a release.
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
-  VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  VERSION: ${{ github.event.inputs.version || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || 'dev' }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Sandbox bundle is up to date
+        working-directory: sandbox
+        run: |
+          npm ci
+          npm run build
+          git diff --exit-code -- ../internal/script/sandbox.bundle.js
+      - name: Go vet & test
+        run: |
+          go vet -tags nogui ./...
+          go test -tags nogui ./...
+      - name: Frontend typecheck & build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -tags nogui ./...
+
   build:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { runner: windows-latest, target: windows/amd64 }
-          - { runner: windows-latest, target: windows/arm64 }
-          # macOS disabled for now: macos-14 jobs sat queued without a runner
-          # until they were cancelled. Re-enable here and in
-          # npm/httpman-app/package.json (optionalDependencies) together.
-          # - { runner: macos-14, target: darwin/arm64 }
-          # - { runner: macos-14, target: darwin/amd64 }
-          - { runner: ubuntu-22.04, target: linux/amd64 }
-          - { runner: ubuntu-22.04-arm, target: linux/arm64 }
-    runs-on: ${{ matrix.runner }}
+        # macOS runners can queue for a long time, so plain branch pushes skip
+        # them; PRs, main, tags and manual runs build macOS too. Every target
+        # here must match npm/httpman-app/package.json optionalDependencies.
+        os: ${{ fromJSON((github.event_name != 'push' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && '["windows","darwin","linux"]' || '["windows","linux"]') }}
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.os == 'windows' && 'windows-latest' || matrix.os == 'darwin' && 'macos-15' || matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -48,20 +91,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
       - name: Build
         shell: bash
-        run: node scripts/build.mjs --target ${{ matrix.target }} --version "${VERSION#v}"
-      - name: Artifact name
-        id: name
-        shell: bash
-        run: echo "name=bin-$(echo '${{ matrix.target }}' | tr / -)" >> "$GITHUB_OUTPUT"
+        run: node scripts/build.mjs --target ${{ matrix.os }}/${{ matrix.arch }} --version "${VERSION#v}"
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.name.outputs.name }}
+          name: bin-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/bin
           if-no-files-found: error
+          retention-days: 7
 
   publish:
-    needs: build
-    if: ${{ !cancelled() && (github.event_name == 'push' || github.event.inputs.publish == 'true') }}
+    needs: [test, test-windows, build]
+    # !cancelled() lets a release go ahead when a build fails (npm-package.mjs
+    # --require-all still refuses to stage without every binary), but the tests must pass.
+    if: ${{ !cancelled() && needs.test.result == 'success' && needs.test-windows.result == 'success' && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event.inputs.publish == 'true') }}
     runs-on: ubuntu-latest
     environment: npm
     permissions:
